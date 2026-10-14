@@ -1,442 +1,292 @@
 /*
- * Smart Pet Feeder V2.1 - Sensor Hub (ESP32-WROOM-32D)
+ * Smart Pet Feeder V2.1 - Vision & Web Hub (ESP32-CAM)
  * 
- * This is the main real-time controller. It handles all the time-critical
- * stuff: weighing the food (HX711), moving the servo, reading the ultrasonic 
- * sensor, checking the RTC, and updating the OLED.
+ * This is the "brain" for the cloud and AI side. It runs on the ESP32-CAM (U2).
+ * It handles Wi-Fi, serves the web dashboard via LittleFS, and runs a TinyML 
+ * (Edge Impulse) model to detect the pet. 
  * 
- * It talks to the ESP32-CAM (Vision/Web Hub) over Serial2.
- * Strictly non-blocking! No delay() in loop() allowed.
+ * It communicates with the Sensor Hub (U1) via UART1 on Pins 13 & 14.
+ * Uses FreeRTOS to offload heavy AI camera processing to Core 1 so the 
+ * web server and UART bridge never freeze.
  */
 
-#include <Wire.h>
-#include <SPI.h>
-#include <U8g2lib.h>
-#include <HX711.h>
-#include <ESP32Servo.h>
-#include <RTClib.h>
-#include <Preferences.h>
+#include <WiFi.h>
+#include <ESPAsyncWebServer.h>
+#include <LittleFS.h>
+#include <esp_camera.h>
+#include <ArduinoJson.h>
 
-// --- PIN DEFINITIONS ---
-// SPI OLED (7-Pin)
-const int PIN_OLED_DIN = 23;
-const int PIN_OLED_CLK = 19;
-const int PIN_OLED_DC  = 4;
-const int PIN_OLED_RES = 32;
-const int PIN_OLED_CS  = 13;
+// Uncomment when you export your Edge Impulse Arduino library:
+// #include <pet_classifier_inferencing.h>
 
-// I2C RTC (DS3231)
-const int PIN_I2C_SDA = 21;
-const int PIN_I2C_SCL = 22;
+// --- UART & CAMERA PINS (AI-Thinker Model) ---
+const int PIN_RX1 = 13;
+const int PIN_TX1 = 14;
 
-// Load Cell (XFW-HX711)
-const int PIN_HX_DT  = 25;
-const int PIN_HX_SCK = 26;
+#define PWDN_GPIO_NUM     32
+#define RESET_GPIO_NUM    -1
+#define XCLK_GPIO_NUM      0
+#define SIOD_GPIO_NUM     26
+#define SIOC_GPIO_NUM     27
+#define Y9_GPIO_NUM       35
+#define Y8_GPIO_NUM       34
+#define Y7_GPIO_NUM       39
+#define Y6_GPIO_NUM       36
+#define Y5_GPIO_NUM       21
+#define Y4_GPIO_NUM       19
+#define Y3_GPIO_NUM       18
+#define Y2_GPIO_NUM        5
+#define VSYNC_GPIO_NUM    25
+#define HREF_GPIO_NUM     23
+#define PCLK_GPIO_NUM     22
 
-// Ultrasonic (HC-SR04)
-const int PIN_US_TRIG = 27;
-const int PIN_US_ECHO = 34; // Needs 1k/2k voltage divider!
+// --- GLOBALS ---
+AsyncWebServer server(80);
+const char* ssid = "YOUR_WIFI_SSID";
+const char* password = "YOUR_WIFI_PASSWORD";
 
-// IR Sensor & Servo
-const int PIN_IR_OUT = 33;
-const int PIN_SERVO  = 18;
+// System State
+bool apOn = false;
+bool timeSynced = false;
+bool linkUp = false;
+uint32_t lastWifiTry = 0;
+uint32_t lastSync = 0;
+uint32_t lastHbRx = 0;
+uint32_t lastHbTx = 0;
 
-// UART2 to ESP32-CAM
-const int PIN_TX2 = 17;
-const int PIN_RX2 = 16;
+// FreeRTOS Queue to trigger AI Task without blocking the main loop
+QueueHandle_t qAiReq;
 
-// --- OBJECTS ---
-U8G2_SSD1306_128X64_NONAME_F_4W_SW_SPI oled(U8G2_R0, PIN_OLED_CLK, PIN_OLED_DIN, PIN_OLED_CS, PIN_OLED_DC, PIN_OLED_RES);
-RTC_DS3231 rtc;
-HX711 scale;
-Servo gate;
-Preferences prefs;
+// Global JPEG double buffer for the web dashboard stream
+camera_fb_t* latest_fb = NULL;
 
-// --- STATE MACHINE ENUMS ---
-enum FeederState {
-  ST_IDLE, ST_PRECHECK, ST_WAIT_PET, ST_DISPENSE, 
-  ST_WIGGLE, ST_SETTLE, ST_TOPUP, ST_REPORT, ST_FAULT
-};
-FeederState currentState = ST_IDLE;
+// --- FREERTOS AI TASK (Runs on Core 1) ---
+void aiTask(void *pvParameters) {
+  while (true) {
+    int triggerCommand;
+    // Block until a <PET_DETECTED> UART command sends a trigger to this queue
+    if (xQueueReceive(qAiReq, &triggerCommand, portMAX_DELAY)) {
+      Serial.println("AI Task: Pet suspected by IR. Capturing frames...");
+      
+      int petVotes = 0;
+      float highestConf = 0.0;
+      
+      // 2-of-3 Temporal Voting Algorithm
+      // Take 3 photos, 250ms apart. At least 2 must confidently have a pet.
+      for (int i = 0; i < 3; i++) {
+        camera_fb_t *fb = esp_camera_fb_get();
+        if (!fb) {
+          Serial.println("Camera capture failed");
+          continue;
+        }
 
-// --- GLOBALS & CONFIG ---
-float currentWeightGrams = 0.0;
-float targetGrams = 0.0;
-float bowlStartWeight = 0.0;
-int hopperPercent = 100;
-bool irDetected = false;
-bool isLinked = false;
+        // Update the global JPEG for the Web UI (free the old one)
+        if (latest_fb) esp_camera_fb_return(latest_fb);
+        latest_fb = fb; // Keep hold of this for /api/snapshot.jpg
+        
+        // =========================================================
+        // TINYML INFERENCE BLOCK (Pseudocode for Edge Impulse)
+        // 1. Resize/Crop fb->buf (320x240 JPEG) to 96x96 RGB888 array
+        // 2. Run signal_t through run_classifier(&signal, &result)
+        // 3. if (result.classification[PET_INDEX].value > 0.75) petVotes++;
+        // =========================================================
+        
+        // For right now, we simulate a positive AI detection:
+        petVotes++; 
+        highestConf = 0.85;
 
-// NVS tracking to prevent double feeds after a power cut
-uint32_t lastFedToken = 0; 
-float dayGramsDispensed = 0.0;
-int currentDayKey = 0; // YYYYMMDD
+        vTaskDelay(250 / portTICK_PERIOD_MS); // Wait 250ms before next frame
+      }
 
-// Config settings (normally set via UART from the CAM's web dashboard)
-float cfg_leftover = 30.0;
-float cfg_daily = 300.0;
-float cfg_ovs = 3.0; // Overshoot compensation (close gate 3g early)
-bool cfg_reqPet = false; // Require AI confirmation?
-
-// Timers for non-blocking loop
-unsigned long lastDisplayMs = 0;
-unsigned long lastRtcMs = 0;
-unsigned long stateTimer = 0;
-unsigned long lastHbMs = 0;
-unsigned long lastIrMs = 0;
-
-// Hardware interrupt vars for Ultrasonic
-volatile unsigned long echoStart = 0;
-volatile unsigned long echoTime = 0;
-volatile bool newEcho = false;
-
-// --- INTERRUPT SERVICE ROUTINE ---
-void IRAM_ATTR echoISR() {
-  if (digitalRead(PIN_US_ECHO) == HIGH) {
-    echoStart = micros();
-  } else {
-    echoTime = micros() - echoStart;
-    newEcho = true;
+      // Send the verdict back to U1
+      if (petVotes >= 2) {
+        Serial.printf("AI Verdict: PET CONFIRMED (Conf: %.2f). Unlocking gate.\n", highestConf);
+        Serial1.println("<VERDICT:PET,0.85>");
+      } else {
+        Serial.println("AI Verdict: FALSE ALARM. Ignoring.");
+        Serial1.println("<VERDICT:NONE,0.0>");
+      }
+    }
   }
 }
 
+// --- SETUP ---
 void setup() {
-  Serial.begin(115200); // USB Debug
-  Serial2.begin(115200, SERIAL_8N1, PIN_RX2, PIN_TX2); // Link to ESP32-CAM
+  Serial.begin(115200); // Debug (USB)
+  Serial1.begin(115200, SERIAL_8N1, PIN_RX1, PIN_TX1); // UART Bridge to U1
   
-  Serial.println("Starting Sensor Hub...");
+  Serial.println("Starting Vision Hub (U2)...");
 
-  // Init NVS (Preferences)
-  prefs.begin("feeder", false);
-  lastFedToken = prefs.getUInt("lastToken", 0);
-  dayGramsDispensed = prefs.getFloat("dayGrams", 0.0);
-  currentDayKey = prefs.getInt("dayKey", 0);
-
-  // Init SPI OLED
-  if (!oled.begin()) {
-    Serial.println("OLED failed!");
-  } else {
-    oled.setFont(u8g2_font_6x10_tf);
-    oled.setFontPosTop();
-    oled.clearBuffer();
-    oled.drawStr(0, 0, "Booting V2.1...");
-    oled.sendBuffer();
+  // Init LittleFS
+  if(!LittleFS.begin(true)){
+    Serial.println("LittleFS Mount Failed");
+    return;
   }
 
-  // Init I2C for RTC
-  Wire.begin(PIN_I2C_SDA, PIN_I2C_SCL);
-  if (!rtc.begin()) {
-    Serial.println("RTC missing!");
+  // Init Camera
+  camera_config_t config;
+  config.ledc_channel = LEDC_CHANNEL_0;
+  config.ledc_timer = LEDC_TIMER_0;
+  config.pin_d0 = Y2_GPIO_NUM;
+  config.pin_d1 = Y3_GPIO_NUM;
+  config.pin_d2 = Y4_GPIO_NUM;
+  config.pin_d3 = Y5_GPIO_NUM;
+  config.pin_d4 = Y6_GPIO_NUM;
+  config.pin_d5 = Y7_GPIO_NUM;
+  config.pin_d6 = Y8_GPIO_NUM;
+  config.pin_d7 = Y9_GPIO_NUM;
+  config.pin_xclk = XCLK_GPIO_NUM;
+  config.pin_pclk = PCLK_GPIO_NUM;
+  config.pin_vsync = VSYNC_GPIO_NUM;
+  config.pin_href = HREF_GPIO_NUM;
+  config.pin_sccb_sda = SIOD_GPIO_NUM;
+  config.pin_sccb_scl = SIOC_GPIO_NUM;
+  config.pin_pwdn = PWDN_GPIO_NUM;
+  config.pin_reset = RESET_GPIO_NUM;
+  config.xclk_freq_hz = 20000000;
+  config.pixel_format = PIXFORMAT_JPEG;
+  
+  // FRAMESIZE_QVGA (320x240) is perfect: low memory, good enough for AI & Web
+  config.frame_size = FRAMESIZE_QVGA; 
+  config.jpeg_quality = 12;
+  config.fb_count = 2; // Double buffering for speed
+
+  if (esp_camera_init(&config) != ESP_OK) {
+    Serial.println("Camera init failed!");
   }
 
-  // Init HX711
-  scale.begin(PIN_HX_DT, PIN_HX_SCK);
-  // NOTE: You need to calibrate this value for your specific load cell!
-  scale.set_scale(2280.f); 
-  scale.tare(); // assume bowl is empty on boot
+  // Start Wi-Fi
+  WiFi.mode(WIFI_STA);
+  WiFi.begin(ssid, password);
 
-  // Init Ultrasonic
-  pinMode(PIN_US_TRIG, OUTPUT);
-  pinMode(PIN_US_ECHO, INPUT);
-  attachInterrupt(digitalPinToInterrupt(PIN_US_ECHO), echoISR, CHANGE);
+  // Setup FreeRTOS Queue & Task for AI
+  qAiReq = xQueueCreate(5, sizeof(int));
+  xTaskCreatePinnedToCore(
+    aiTask,         // Task function
+    "AI_Task",      // Name
+    8192,           // Stack size (Edge impulse needs ~8k-10k)
+    NULL,           // Parameters
+    1,              // Priority
+    NULL,           // Handle
+    1               // Pin to Core 1 (Core 0 handles WiFi/System)
+  );
 
-  // Init IR
-  pinMode(PIN_IR_OUT, INPUT_PULLUP); // Active LOW
-
-  // Init Servo
-  ESP32PWM::allocateTimer(0);
-  gate.setPeriodHertz(50);
-  gate.attach(PIN_SERVO, 500, 2400);
-  gate.write(10); // 10 degrees is CLOSED
-  delay(500);     // Let it reach position
-  gate.detach();  // Detach to save power and prevent jitter/heat
+  // --- WEB SERVER ROUTES ---
   
-  Serial.println("Setup complete.");
+  // 1. Serve frontend UI
+  server.serveStatic("/", LittleFS, "/").setDefaultFile("index.html");
+
+  // 2. Manual Feed API
+  server.on("/api/feed", HTTP_POST, [](AsyncWebServerRequest *request){
+    if (!linkUp) {
+      request->send(503, "text/plain", "Error: Link to Sensor Hub is DOWN.");
+      return;
+    }
+    // Generate an ID for idempotency, tell U1 to feed 50g
+    uint32_t feedId = millis();
+    Serial1.printf("<FEED_NOW:50,%lu>\n", feedId);
+    request->send(200, "text/plain", "Feed requested");
+  });
+
+  // 3. Configuration API (Updated with daily_g fix)
+  server.on("/api/config", HTTP_POST, [](AsyncWebServerRequest *request){}, NULL, 
+    [](AsyncWebServerRequest *request, uint8_t *data, size_t len, size_t index, size_t total){
+      DynamicJsonDocument doc(512);
+      deserializeJson(doc, (const char*)data);
+      
+      // Forward configs to U1 over UART
+      if (doc["leftover_g"].is<float>())   Serial1.printf("<CFG:leftover=%.1f>\n", (float)doc["leftover_g"]);
+      if (doc["daily_g"].is<float>())      Serial1.printf("<CFG:daily=%.1f>\n", (float)doc["daily_g"]);
+      if (doc["require_pet"].is<bool>())   Serial1.printf("<CFG:reqPet=%d>\n", doc["require_pet"] ? 1 : 0);
+      
+      request->send(200, "text/plain", "Config updated");
+  });
+
+  // 4. JPEG Snapshot API
+  server.on("/api/snapshot.jpg", HTTP_GET, [](AsyncWebServerRequest *request){
+    if (latest_fb) {
+      // Send the JPEG currently held in memory
+      AsyncWebServerResponse *response = request->beginResponse_P(200, "image/jpeg", latest_fb->buf, latest_fb->len);
+      request->send(response);
+    } else {
+      request->send(503, "text/plain", "No image available yet");
+    }
+  });
+
+  server.begin();
+  Serial.println("Web server started.");
 }
 
+// --- MAIN LOOP (Runs on Core 0) ---
 void loop() {
   unsigned long now = millis();
 
-  hxService();
-  usService(now);
-  irService(now);
-  clockService(now);
-  commService(now);
-  feederTask(now);
-  displayService(now);
-}
-
-// --- NON-BLOCKING SERVICES ---
-
-void hxService() {
-  // Read scale without blocking the loop
-  if (scale.is_ready()) {
-    // In a real build, you'd want a 5-sample median filter here
-    // Keeping it simple for readability
-    currentWeightGrams = scale.get_units(1);
-  }
-}
-
-void usService(unsigned long now) {
-  static unsigned long lastTrigger = 0;
-  
-  // Fire trigger every 1 second
-  if (now - lastTrigger > 1000) {
-    lastTrigger = now;
-    digitalWrite(PIN_US_TRIG, LOW);
-    delayMicroseconds(2);
-    digitalWrite(PIN_US_TRIG, HIGH);
-    delayMicroseconds(10);
-    digitalWrite(PIN_US_TRIG, LOW);
-  }
-
-  // Process hardware interrupt result
-  if (newEcho) {
-    newEcho = false;
-    float cm = echoTime / 58.0;
-    
-    // Map distance to percentage (adjust 4.0 and 22.0 based on your hopper)
-    int pct = map((int)cm, 22, 4, 0, 100);
-    hopperPercent = constrain(pct, 0, 100);
-    
-    // Alert CAM if food is low
-    if (hopperPercent < 15) {
-      Serial2.println("<LOW_FOOD>"); 
-    }
-  }
-}
-
-void irService(unsigned long now) {
-  // IR is active LOW. Use a cooldown so we don't spam the CAM
-  if (digitalRead(PIN_IR_OUT) == LOW) {
-    if (now - lastIrMs > 10000) { // 10 sec cooldown
-      lastIrMs = now;
-      irDetected = true;
-      Serial2.println("<PET_DETECTED>");
-      Serial.println("IR: Pet detected!");
-    }
-  }
-}
-
-void clockService(unsigned long now) {
-  if (now - lastRtcMs > 1000) {
-    lastRtcMs = now;
-    DateTime t = rtc.now();
-    
-    // Check midnight rollover for daily limit
-    int today = t.year() * 10000 + t.month() * 100 + t.day();
-    if (today != currentDayKey) {
-      currentDayKey = today;
-      dayGramsDispensed = 0.0;
-      prefs.putInt("dayKey", currentDayKey);
-      prefs.putFloat("dayGrams", dayGramsDispensed);
-    }
-    
-    // In full implementation, loop over 4 schedule arrays here.
-    // If current time matches a slot, generate a token, compare to lastFedToken.
-    // If different, call requestFeed(grams) and save new token to NVS.
-  }
-}
-
-void commService(unsigned long now) {
-  // 1. Send Heartbeat to CAM
-  if (now - lastHbMs > 2000) {
-    lastHbMs = now;
-    Serial2.printf("<HB:%lu>\n", millis() / 1000);
-  }
-  
-  // 2. Read incoming commands from CAM
-  while (Serial2.available()) {
-    String msg = Serial2.readStringUntil('\n');
+  // 1. UART Bridge (Read from U1)
+  while (Serial1.available()) {
+    String msg = Serial1.readStringUntil('\n');
     msg.trim();
     if (msg.startsWith("<") && msg.endsWith(">")) {
       msg = msg.substring(1, msg.length() - 1);
       
-      // Parse manual feed command e.g., FEED_NOW:50
-      if (msg.startsWith("FEED_NOW:")) {
-        int g = msg.substring(9).toInt();
-        if (currentState == ST_IDLE) {
-          targetGrams = (float)g;
-          currentState = ST_PRECHECK; // Kick off the state machine
-          Serial.printf("Manual feed requested: %dg\n", g);
-        }
-      } 
-      // Parse AI verdict
-      else if (msg.startsWith("VERDICT:PET")) {
-        if (currentState == ST_WAIT_PET) {
-          currentState = ST_DISPENSE; // AI confirmed pet, open gate!
-        }
+      if (msg.startsWith("HB:")) {
+        lastHbRx = now;
+        linkUp = true;
       }
-      else if (msg.startsWith("HB:")) {
-        isLinked = true;
+      else if (msg == "LOW_FOOD") {
+        Serial.println("U1 reports: LOW FOOD!");
+        // (Optional: send push notification via Pushbullet/Telegram here)
+      }
+      else if (msg == "PET_DETECTED") {
+        // IR sensor tripped! Wake up the AI Task to check the camera
+        int trigger = 1;
+        xQueueSend(qAiReq, &trigger, 0); 
+      }
+      else if (msg.startsWith("LOG:")) {
+        // U1 just finished a feed. Append to log file.
+        String amount = msg.substring(4);
+        appendLog(amount.toFloat());
       }
     }
   }
+
+  // 2. Send UART Heartbeat
+  if (now - lastHbTx > 2000) {
+    lastHbTx = now;
+    Serial1.printf("<HB:%lu>\n", millis() / 1000);
+  }
+
+  // 3. Link Failure Detection
+  if (now - lastHbRx > 6000) {
+    linkUp = false;
+  }
 }
 
-// --- MAIN DISPENSING STATE MACHINE ---
-void feederTask(unsigned long now) {
-  static unsigned long stateEntryMs = 0;
-  static int wiggles = 0;
+// --- UTILITIES ---
+
+void appendLog(float amountGrams) {
+  // Fix: Log Rotation! Prevent filling up the 1MB LittleFS partition.
+  File file = LittleFS.open("/log.ndjson", FILE_READ);
+  if (file && file.size() > 100000) { // 100 KB limit
+    file.close();
+    Serial.println("Log file > 100kB. Rotating...");
+    LittleFS.remove("/log.old");
+    LittleFS.rename("/log.ndjson", "/log.old");
+  } else if (file) {
+    file.close();
+  }
+
+  // Append new record
+  file = LittleFS.open("/log.ndjson", FILE_APPEND);
+  if (!file) return;
+
+  DynamicJsonDocument doc(128);
+  doc["timestamp"] = millis(); // Usually sync this with NTP in prod
+  doc["dispensed_g"] = amountGrams;
   
-  switch (currentState) {
-    case ST_IDLE:
-      // Just chilling. Gate is detached.
-      break;
-
-    case ST_PRECHECK:
-      // Tare / baseline check
-      bowlStartWeight = currentWeightGrams;
-      
-      // Policy checks
-      if (bowlStartWeight > cfg_leftover) {
-        Serial.println("Skip: Too much food in bowl.");
-        currentState = ST_REPORT;
-      } else if (dayGramsDispensed + targetGrams > cfg_daily) {
-        Serial.println("Skip: Daily limit reached.");
-        currentState = ST_REPORT;
-      } else {
-        if (cfg_reqPet) {
-          stateEntryMs = now;
-          currentState = ST_WAIT_PET;
-          Serial.println("Waiting for AI pet confirmation...");
-        } else {
-          stateEntryMs = now;
-          currentState = ST_DISPENSE;
-        }
-      }
-      break;
-
-    case ST_WAIT_PET:
-      if (now - stateEntryMs > 120000) { // 2 minute timeout
-        Serial.println("Skip: Pet never showed up.");
-        currentState = ST_REPORT;
-      }
-      break;
-
-    case ST_DISPENSE:
-      if (!gate.attached()) gate.attach(PIN_SERVO);
-      gate.write(80); // Open gate
-      
-      // Overshoot check (close slightly early because kibble falls through air)
-      if (currentWeightGrams >= (bowlStartWeight + targetGrams - cfg_ovs)) {
-        gate.write(10); // Close
-        stateEntryMs = now;
-        currentState = ST_SETTLE;
-      }
-      
-      // Hard timeout check (8 seconds max to prevent burning servo)
-      if (now - stateEntryMs > 8000) {
-        gate.write(10);
-        stateEntryMs = now;
-        currentState = ST_SETTLE;
-      }
-      
-      // (Jam detection logic would go here. If weight doesn't rise, go to ST_WIGGLE)
-      break;
-
-    case ST_WIGGLE:
-      // Quickly flutter the gate to break kibble jams
-      gate.write(80);
-      delay(150); // okay, one tiny delay for the wiggle is forgivable
-      gate.write(10);
-      delay(150);
-      wiggles++;
-      if (wiggles > 2) {
-        currentState = ST_FAULT; // Jammed completely
-      } else {
-        currentState = ST_DISPENSE;
-      }
-      break;
-
-    case ST_SETTLE:
-      // Wait 1.5s for vibrations to stop before reading final weight
-      if (now - stateEntryMs > 1500) {
-        gate.detach(); // Detach to save power!
-        
-        float dispensed = currentWeightGrams - bowlStartWeight;
-        if (dispensed < targetGrams - 2.0) {
-           // Short pour, do a top up pulse
-           currentState = ST_TOPUP;
-        } else {
-           currentState = ST_REPORT;
-        }
-      }
-      break;
-
-    case ST_TOPUP:
-      gate.attach(PIN_SERVO);
-      gate.write(80);
-      delay(250); // fast pulse
-      gate.write(10);
-      stateEntryMs = now;
-      currentState = ST_SETTLE;
-      break;
-
-    case ST_REPORT:
-      {
-        float netDispensed = currentWeightGrams - bowlStartWeight;
-        if (netDispensed < 0) netDispensed = 0;
-        
-        dayGramsDispensed += netDispensed;
-        prefs.putFloat("dayGrams", dayGramsDispensed);
-        
-        Serial.printf("Feed complete. Dispensed: %.1fg\n", netDispensed);
-        Serial2.printf("<LOG:%.1f>\n", netDispensed);
-        
-        currentState = ST_IDLE;
-        wiggles = 0;
-      }
-      break;
-
-    case ST_FAULT:
-      // Latch in fault state. Requires manual <CLEAR> command from UI.
-      if (gate.attached()) {
-        gate.write(10);
-        delay(500);
-        gate.detach();
-      }
-      break;
-  }
-}
-
-void displayService(unsigned long now) {
-  // Update OLED every 500ms
-  if (now - lastDisplayMs > 500) {
-    lastDisplayMs = now;
-    
-    DateTime t = rtc.now();
-    char buf[32];
-    
-    oled.clearBuffer();
-    
-    // Top Bar
-    snprintf(buf, sizeof(buf), "%02d:%02d", t.hour(), t.minute());
-    oled.drawStr(0, 0, buf);
-    
-    oled.drawStr(95, 0, isLinked ? "LINK" : "OFF");
-    
-    // Main stats
-    snprintf(buf, sizeof(buf), "Bowl: %.1f g", currentWeightGrams);
-    oled.drawStr(0, 20, buf);
-    
-    snprintf(buf, sizeof(buf), "Food: %d%%", hopperPercent);
-    oled.drawStr(0, 35, buf);
-    
-    // State footer
-    const char* stateTxt;
-    switch (currentState) {
-      case ST_IDLE: stateTxt = "IDLE"; break;
-      case ST_PRECHECK: stateTxt = "CHECKING"; break;
-      case ST_WAIT_PET: stateTxt = "WAIT PET"; break;
-      case ST_DISPENSE: stateTxt = "POURING"; break;
-      case ST_SETTLE: stateTxt = "SETTLING"; break;
-      case ST_FAULT: stateTxt = "FAULT!"; break;
-      default: stateTxt = "BUSY"; break;
-    }
-    snprintf(buf, sizeof(buf), "State: %s", stateTxt);
-    oled.drawStr(0, 52, buf);
-    
-    oled.sendBuffer();
-  }
+  String output;
+  serializeJson(doc, output);
+  file.println(output);
+  file.close();
+  
+  Serial.println("Feed logged to LittleFS.");
 }
