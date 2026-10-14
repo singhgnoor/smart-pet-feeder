@@ -4,7 +4,6 @@ interface ImportMetaEnv {
   readonly VITE_DEVICE_MODE?: 'hardware' | 'mock';
   readonly VITE_ESP32_HOST?: string;
   readonly VITE_ESP32_PORT?: string;
-  readonly VITE_DEVICE_API_KEY?: string;
 }
 
 interface ImportMeta {

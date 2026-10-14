@@ -1,8 +1,9 @@
 /**
  * Device service contract.
  *
- * Every method corresponds to an endpoint of the ESP32-CAM web API described in the
- * Smart Pet Feeder technical reference:
+ * This abstraction supports the mock feature set and the verified subset of the
+ * current CAM API. Hardware methods may reject as UNSUPPORTED when the WROOM
+ * firmware cannot perform or confirm the operation:
  *
  *   Browser ──HTTP/SSE──▶ ESP32-CAM (U2) ──UART <CMD*HH>──▶ ESP32-WROOM (U1)
  *
@@ -30,9 +31,9 @@ export interface DeviceService {
   /** 'hardware' when communicating with the physical ESP32-CAM, 'mock' when simulating. */
   readonly mode: DeviceMode;
 
-  /** GET /api/status → `{link, rssi, state, telem}` */
+  /** GET /api/status; hardware telemetry may be null when CAM defaults are unverifiable. */
   getStatus(): Promise<DeviceStatus>;
-  /** POST /api/feed `{"grams":50}` → 202 `{id, accepted}`; result arrives as a `log` event. */
+  /** POST /api/feed; hardware 202 reports CAM acceptance only until correlated device results exist. */
   feed(grams: number): Promise<CommandAck>;
   /** POST /api/abort → closes the gate and aborts the active feed. */
   abort(): Promise<CommandAck>;

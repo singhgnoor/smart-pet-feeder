@@ -4,13 +4,13 @@ import { useDevice } from '../context/DeviceContext';
 import { FAULT_INFO } from '../utils/labels';
 
 export const DeviceStatusView: React.FC = () => {
-  const { telemetry, connection, actions, pending } = useDevice();
+  const { telemetry, connection, actions, pending, mode } = useDevice();
 
   const isOnline = connection === 'connected';
   const isFault = telemetry?.state === 'FAULT';
 
-  const hopperPct = telemetry?.hopperPct ?? 78;
-  const bowlWeight = telemetry?.bowlWeightG ?? 12;
+  const hopperPct = telemetry?.hopperPct ?? 0;
+  const bowlWeight = telemetry?.bowlWeightG ?? 0;
   const isPetPresent = telemetry?.petPresent ?? false;
   const isGateOpen = telemetry?.gateOpen ?? false;
 
@@ -46,7 +46,7 @@ export const DeviceStatusView: React.FC = () => {
             Hopper Level
           </div>
           <div style={{ fontSize: '24px', fontWeight: 800, color: 'var(--text-main)', marginBottom: '12px' }}>
-            {hopperPct}%
+            {telemetry ? `${hopperPct}%` : '—'}
           </div>
 
           {/* Visual Silo Graphic */}
@@ -81,7 +81,7 @@ export const DeviceStatusView: React.FC = () => {
           </div>
 
           <div style={{ fontSize: '12px', color: 'var(--text-muted)', fontWeight: 600 }}>
-            ~{hopperKgRemaining} kg remaining
+            {telemetry ? `~${hopperKgRemaining} kg remaining` : 'No verified reading'}
           </div>
         </div>
 
@@ -91,7 +91,7 @@ export const DeviceStatusView: React.FC = () => {
             Bowl Weight
           </div>
           <div style={{ fontSize: '24px', fontWeight: 800, color: 'var(--text-main)', marginBottom: '12px' }}>
-            {bowlWeight.toFixed(0)} g
+            {telemetry ? `${bowlWeight.toFixed(0)} g` : '—'}
           </div>
 
           {/* Visual Bowl Graphic */}
@@ -127,7 +127,7 @@ export const DeviceStatusView: React.FC = () => {
               marginBottom: '12px',
             }}
           >
-            {isPetPresent ? 'Pet Detected' : 'No Pet'}
+            {telemetry ? (isPetPresent ? 'Pet Detected' : 'No Pet') : 'Unknown'}
           </div>
 
           {/* Visual IR Beam Graphic */}
@@ -188,7 +188,7 @@ export const DeviceStatusView: React.FC = () => {
               marginBottom: '12px',
             }}
           >
-            {isGateOpen ? 'Open 🔓' : 'Closed 🔒'}
+            {telemetry ? (isGateOpen ? 'Open 🔓' : 'Closed 🔒') : 'Unknown'}
           </div>
 
           {/* Visual Gate Servo Graphic */}
@@ -203,7 +203,7 @@ export const DeviceStatusView: React.FC = () => {
               fontSize: '44px',
             }}
           >
-            {isGateOpen ? '🚪' : '🔒'}
+            {telemetry ? (isGateOpen ? '🚪' : '🔒') : '❔'}
           </div>
 
           <div style={{ fontSize: '12px', color: 'var(--text-muted)', fontWeight: 600 }}>
@@ -220,12 +220,12 @@ export const DeviceStatusView: React.FC = () => {
             ? '6px solid #cf1322'
             : !isOnline
             ? '6px solid #ad6800'
-            : '6px solid var(--primary-green)',
+            : telemetry ? '6px solid var(--primary-green)' : '6px solid #ad6800',
           background: isFault
             ? 'var(--status-err-bg)'
             : !isOnline
             ? 'var(--status-warn-bg)'
-            : 'var(--status-ok-bg)',
+            : telemetry ? 'var(--status-ok-bg)' : 'var(--status-warn-bg)',
           padding: '24px',
         }}
       >
@@ -245,8 +245,10 @@ export const DeviceStatusView: React.FC = () => {
             >
               {isFault ? (
                 <AlertTriangle size={24} color="#cf1322" />
-              ) : (
+              ) : telemetry ? (
                 <CheckCircle2 size={24} color="#237844" />
+              ) : (
+                <AlertTriangle size={24} color="#ad6800" />
               )}
             </div>
 
@@ -256,14 +258,14 @@ export const DeviceStatusView: React.FC = () => {
                   ? `${telemetry?.fault ?? 'System'} Fault Latched`
                   : !isOnline
                   ? 'Device Offline'
-                  : 'All systems nominal'}
+                  : telemetry ? 'All systems nominal' : 'Feeder telemetry unavailable'}
               </h3>
               <p style={{ fontSize: '14px', color: 'var(--text-muted)' }}>
                 {isFault
                   ? FAULT_INFO[telemetry?.fault ?? 'SENSOR'].description
                   : !isOnline
                   ? 'ESP32 link is disconnected. Check Wi-Fi or simulation link.'
-                  : 'Feeder is running smoothly. Closed-loop load cell, servo gate, and RTC synchronized.'}
+                  : telemetry ? 'Feeder is running smoothly. Closed-loop load cell, servo gate, and RTC synchronized.' : 'The CAM is reachable, but this firmware does not provide verifiable WROOM telemetry.'}
               </p>
             </div>
           </div>
@@ -272,7 +274,7 @@ export const DeviceStatusView: React.FC = () => {
             <button
               className="btn btn--danger"
               onClick={() => actions.clearFault()}
-              disabled={pending.clear}
+              disabled={pending.clear || mode === 'hardware'}
             >
               Clear Fault
             </button>

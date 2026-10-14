@@ -4,7 +4,7 @@ import { dateTime, grams, duration } from '../utils/format';
 import { RESULT_INFO } from '../utils/labels';
 
 export const FeedingLogsView: React.FC = () => {
-  const { events } = useDevice();
+  const { events, mode } = useDevice();
   const [filter, setFilter] = useState<string>('all');
   const [sourceFilter, setSourceFilter] = useState<string>('all');
 
@@ -65,6 +65,12 @@ export const FeedingLogsView: React.FC = () => {
           </select>
         </div>
       </div>
+
+      {mode === 'hardware' && events.length === 0 && (
+        <p role="status" style={{ color: '#ad6800', marginBottom: '16px' }}>
+          Verified device history is unavailable. The current CAM does not retain complete WROOM feeding records.
+        </p>
+      )}
 
       {/* Summary KPI Badges */}
       <div className="grid-kpi-3">

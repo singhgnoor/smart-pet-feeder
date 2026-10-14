@@ -6,6 +6,9 @@ export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), '');
   const espHost = env.VITE_ESP32_HOST || '192.168.1.100';
   const espPort = env.VITE_ESP32_PORT || '80';
+  // Keep the device credential in the dev-server process. VITE_ variables are
+  // available to browser bundles, so the legacy name is read only server-side.
+  const deviceApiKey = env.DEVICE_API_KEY || env.VITE_DEVICE_API_KEY || '';
   const target = `http://${espHost}:${espPort}`;
 
   return {
@@ -21,6 +24,16 @@ export default defineConfig(({ mode }) => {
           secure: false,
           timeout: 8000,
           configure: (proxy) => {
+            proxy.on('proxyReq', (proxyReq, req) => {
+              if (
+                deviceApiKey &&
+                req.method !== 'GET' &&
+                req.method !== 'HEAD' &&
+                req.method !== 'OPTIONS'
+              ) {
+                proxyReq.setHeader('X-API-Key', deviceApiKey);
+              }
+            });
             proxy.on('error', (err, _req, res) => {
               // Gracefully handle hardware connection errors without crashing Vite
               if (!res.headersSent && 'writeHead' in res) {

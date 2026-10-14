@@ -157,6 +157,11 @@ export const SettingsView: React.FC = () => {
           </div>
 
           <form onSubmit={handleSaveGeneral}>
+            {mode === 'hardware' && (
+              <p role="status" style={{ color: '#ad6800', marginBottom: '16px' }}>
+                Device configuration cannot be read or applied by the current WROOM firmware. Displayed values are editable UI defaults and are not device settings.
+              </p>
+            )}
             <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
               {/* Daily Feeding Limit */}
               <div
@@ -288,7 +293,7 @@ export const SettingsView: React.FC = () => {
                 <button
                   type="submit"
                   className="btn btn--primary"
-                  disabled={pending.config}
+                  disabled={pending.config || mode === 'hardware'}
                 >
                   <Check size={16} />
                   <span>Save Settings</span>
@@ -324,7 +329,7 @@ export const SettingsView: React.FC = () => {
                     </p>
                   </div>
                 </div>
-                <button className="btn btn--danger" onClick={handleClearFault} disabled={pending.clear}>
+                <button className="btn btn--danger" onClick={handleClearFault} disabled={pending.clear || mode === 'hardware'}>
                   Clear Fault
                 </button>
               </div>
@@ -362,7 +367,7 @@ export const SettingsView: React.FC = () => {
                 <button
                   className="btn btn--secondary"
                   onClick={handleTare}
-                  disabled={pending.tare}
+                  disabled={pending.tare || mode === 'hardware'}
                 >
                   Zero / Tare Scale (0 g)
                 </button>
@@ -402,7 +407,7 @@ export const SettingsView: React.FC = () => {
                 <button
                   className="btn btn--primary"
                   onClick={handleCalibrate}
-                  disabled={pending.calibrate}
+                  disabled={pending.calibrate || mode === 'hardware'}
                 >
                   Calibrate Scale Factor
                 </button>

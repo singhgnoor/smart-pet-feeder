@@ -12,13 +12,8 @@ import type {
   CommandAck,
   DeviceEventListener,
   DeviceStatus,
-  FeederConfig,
-  FeedingEvent,
-  FeedingSchedule,
-  PetVisit,
   RawLogRecord,
   RawPetVerdict,
-  RawScheduleSlot,
   RawStateString,
   RawStatus,
   RawTelemetry,
@@ -27,37 +22,32 @@ import type {
 import { DeviceError } from '../types/device';
 import type { DeviceService } from './deviceService';
 import {
-  configToRaw,
-  eventFromLog,
   localIso,
-  scheduleFromRaw,
-  scheduleToRaw,
   statusFromRaw,
 } from './protocol';
 
-const HARDWARE_CONFIG_STORAGE_KEY = 'pawpilot.config.hardware';
-const HARDWARE_VISITS_STORAGE_KEY = 'pawpilot.visits.hardware';
 const REQUEST_TIMEOUT_MS = 6000;
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function unsupported(operation: string): DeviceError {
+  return new DeviceError('UNSUPPORTED', `${operation} is unavailable: the connected WROOM firmware has no handler for this operation.`);
+}
 
 export class RestDeviceService implements DeviceService {
   readonly mode = 'hardware' as const;
 
   private baseUrl: string;
-  private apiKey: string;
   private eventSource: EventSource | null = null;
   private listeners = new Set<DeviceEventListener>();
-  private visitRingBuffer: PetVisit[] = [];
   private pollTimer: number | null = null;
   private lastSnapshotObjectUrl: string | null = null;
   private isConnected = false;
 
-  constructor(
-    baseUrl = '',
-    apiKey = import.meta.env.VITE_DEVICE_API_KEY || ''
-  ) {
+  constructor(baseUrl = '') {
     this.baseUrl = baseUrl.replace(/\/+$/, '');
-    this.apiKey = apiKey;
-    this.loadPersistedVisits();
   }
 
   // ---------------------------------------------------------------------------
@@ -77,10 +67,6 @@ export class RestDeviceService implements DeviceService {
       ...(options.headers as Record<string, string>),
     };
 
-    if (this.apiKey) {
-      headers['X-API-Key'] = this.apiKey;
-    }
-
     try {
       const response = await fetch(url, {
         ...options,
@@ -92,11 +78,16 @@ export class RestDeviceService implements DeviceService {
 
       // Handle expected HTTP status codes per technical reference
       if (response.status === 202) {
-        // Accepted (command endpoints)
+        // 202 means accepted for processing. It is never evidence of completion.
         try {
-          return (await response.json()) as T;
-        } catch {
-          return { accepted: true } as unknown as T;
+          const payload: unknown = await response.json();
+          if (!isRecord(payload) || payload.accepted !== true) {
+            throw new DeviceError('UNKNOWN', `Malformed 202 response from ${endpoint}: accepted:true is required`);
+          }
+          return { ...payload, stage: 'cam-accepted' } as T;
+        } catch (err) {
+          if (err instanceof DeviceError) throw err;
+          throw new DeviceError('UNKNOWN', `Malformed 202 response from ${endpoint}`);
         }
       }
 
@@ -152,7 +143,14 @@ export class RestDeviceService implements DeviceService {
   /** GET /api/status → { link, rssi, state, telem } */
   async getStatus(): Promise<DeviceStatus> {
     const raw = await this.request<RawStatus>('/api/status');
+    if (!isRecord(raw) || typeof raw.link !== 'boolean' || typeof raw.rssi !== 'number' || !Number.isFinite(raw.rssi) ||
+        typeof raw.state !== 'string' || !isRecord(raw.telem)) {
+      throw new DeviceError('UNKNOWN', 'Malformed status response from ESP32-CAM');
+    }
     const status = statusFromRaw(raw);
+    // The checked-in WROOM never emits TELEM. The CAM serves initialized defaults
+    // in that case, so these values cannot be presented as sensor readings.
+    status.telemetry = null;
     this.updateConnectionState(true);
     return status;
   }
@@ -171,54 +169,28 @@ export class RestDeviceService implements DeviceService {
 
   /** POST /api/abort → 202 */
   async abort(): Promise<CommandAck> {
-    return this.request<CommandAck>('/api/abort', {
-      method: 'POST',
-    });
+    throw unsupported('Abort');
   }
 
   /** POST /api/clear → 202 (clears latched JAM / SENSOR fault) */
   async clearFault(): Promise<CommandAck> {
-    return this.request<CommandAck>('/api/clear', {
-      method: 'POST',
-    });
+    throw unsupported('Fault clearing');
   }
 
   /** GET /api/schedule → [{ i, hh, mm, g, en }, ...] */
-  async getSchedule(): Promise<FeedingSchedule[]> {
-    try {
-      const raw = await this.request<RawScheduleSlot[]>('/api/schedule');
-      if (Array.isArray(raw)) {
-        return scheduleFromRaw(raw);
-      }
-      return scheduleFromRaw([]);
-    } catch (err) {
-      console.warn('[RestDevice] Could not fetch schedule from hardware:', err);
-      return scheduleFromRaw([]);
-    }
+  async getSchedule(): Promise<import('../types/device').FeedingSchedule[]> {
+    throw unsupported('Reading the device schedule');
   }
 
   /** PUT /api/schedule [{ i, hh, mm, g, en }, ...] → 202 */
-  async putSchedule(slots: FeedingSchedule[]): Promise<CommandAck> {
-    const raw = scheduleToRaw(slots);
-    return this.request<CommandAck>('/api/schedule', {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(raw),
-    });
+  async putSchedule(slots: import('../types/device').FeedingSchedule[]): Promise<CommandAck> {
+    void slots;
+    throw unsupported('Updating the device schedule');
   }
 
   /** GET /api/log → [{ slot, src, id, tgt, w0, w1, d, res, wig, top, ms, ts }, ...] */
-  async getLog(): Promise<FeedingEvent[]> {
-    try {
-      const raw = await this.request<RawLogRecord[]>('/api/log');
-      if (Array.isArray(raw)) {
-        return raw.map((r) => eventFromLog(r, false));
-      }
-      return [];
-    } catch (err) {
-      console.warn('[RestDevice] Could not fetch log from hardware:', err);
-      return [];
-    }
+  async getLog(): Promise<import('../types/device').FeedingEvent[]> {
+    throw unsupported('Reading device feeding history');
   }
 
   /** GET /api/snapshot.jpg → latest camera frame */
@@ -239,7 +211,12 @@ export class RestDeviceService implements DeviceService {
         throw new DeviceError('BUSY', `Camera snapshot returned HTTP ${res.status}`);
       }
 
+      if (!res.headers.get('content-type')?.toLowerCase().startsWith('image/jpeg')) {
+        throw new DeviceError('UNKNOWN', 'Camera snapshot response was not image/jpeg');
+      }
+
       const blob = await res.blob();
+      if (blob.size === 0) throw new DeviceError('UNKNOWN', 'Camera snapshot was empty');
       if (this.lastSnapshotObjectUrl) {
         URL.revokeObjectURL(this.lastSnapshotObjectUrl);
       }
@@ -263,58 +240,29 @@ export class RestDeviceService implements DeviceService {
 
   /** POST /api/tare → 202 */
   async tare(): Promise<CommandAck> {
-    return this.request<CommandAck>('/api/tare', {
-      method: 'POST',
-    });
+    throw unsupported('Scale tare');
   }
 
   /** POST /api/calibrate {"known_g": number} → 202 { accepted, factor } */
   async calibrate(knownG: number): Promise<CommandAck & { factor?: number }> {
-    return this.request<CommandAck & { factor?: number }>('/api/calibrate', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ known_g: knownG }),
-    });
+    void knownG;
+    throw unsupported('Scale calibration');
   }
 
   /** POST /api/config { leftover_g, overshoot_g, daily_g, require_pet } → 202 */
-  async setConfig(config: FeederConfig): Promise<CommandAck> {
-    const raw = configToRaw(config);
-    const ack = await this.request<CommandAck>('/api/config', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(raw),
-    });
-
-    // Cache locally since firmware has no GET /api/config
-    try {
-      localStorage.setItem(HARDWARE_CONFIG_STORAGE_KEY, JSON.stringify(config));
-    } catch {
-      /* ignore */
-    }
-
-    return ack;
+  async setConfig(config: import('../types/device').FeederConfig): Promise<CommandAck> {
+    void config;
+    throw unsupported('Updating feeder configuration');
   }
 
   /** Returns current config (cached from previous setConfig or defaults) */
-  async getConfig(): Promise<FeederConfig> {
-    try {
-      const raw = localStorage.getItem(HARDWARE_CONFIG_STORAGE_KEY);
-      if (raw) return JSON.parse(raw) as FeederConfig;
-    } catch {
-      /* ignore */
-    }
-    return {
-      dailyLimitG: 300,
-      leftoverThresholdG: 30,
-      overshootMarginG: 3,
-      requirePetDetection: false,
-    };
+  async getConfig(): Promise<import('../types/device').FeederConfig> {
+    throw unsupported('Reading feeder configuration');
   }
 
   /** Returns recent TinyML verdicts received via SSE */
-  async getPetVisits(): Promise<PetVisit[]> {
-    return [...this.visitRingBuffer];
+  async getPetVisits(): Promise<import('../types/device').PetVisit[]> {
+    return [];
   }
 
   // ---------------------------------------------------------------------------
@@ -344,16 +292,9 @@ export class RestDeviceService implements DeviceService {
     this.initEventSource();
     try {
       const st = await this.getStatus();
-      this.emit({ type: 'telemetry', data: {
-        t: st.telemetry.deviceTime,
-        w: st.telemetry.bowlWeightG,
-        hop: st.telemetry.hopperPct,
-        st: (st.telemetry.fault ?? st.telemetry.state) as RawStateString,
-        ir: st.telemetry.petPresent ? 1 : 0,
-        vis: st.telemetry.petVisitsToday,
-        day: st.telemetry.dispensedTodayG,
-        gate: st.telemetry.gateOpen ? 1 : 0,
-      }});
+      // getStatus establishes CAM reachability only. The CAM's telemetry fields
+      // are not attributable to fresh WROOM sensor data in the checked-in firmware.
+      void st;
     } catch (err) {
       console.warn('[RestDevice] Reconnect getStatus failed:', err);
     }
@@ -376,9 +317,9 @@ export class RestDeviceService implements DeviceService {
       // 1. Telemetry frames (1 Hz idle, 4 Hz dispensing)
       es.addEventListener('telemetry', (e) => {
         try {
-          const raw = JSON.parse(e.data) as RawTelemetry;
-          this.updateConnectionState(true);
-          this.emit({ type: 'telemetry', data: raw });
+          // Current CAM periodically republishes its own default telemetry when
+          // WROOM has not supplied a TELEM frame. Do not treat it as sensor data.
+          JSON.parse(e.data) as RawTelemetry;
         } catch (err) {
           console.warn('[RestDevice] Malformed telemetry frame:', err);
         }
@@ -397,8 +338,8 @@ export class RestDeviceService implements DeviceService {
       // 3. Completed feed log events
       es.addEventListener('log', (e) => {
         try {
-          const raw = JSON.parse(e.data) as RawLogRecord;
-          this.emit({ type: 'log', data: raw });
+          // CAM constructs a full-looking record from WROOM's amount-only LOG frame.
+          JSON.parse(e.data) as RawLogRecord;
         } catch (err) {
           console.warn('[RestDevice] Malformed log event:', err);
         }
@@ -407,28 +348,8 @@ export class RestDeviceService implements DeviceService {
       // 4. Pet detection verdicts from TinyML
       es.addEventListener('pet', (e) => {
         try {
-          const raw = JSON.parse(e.data) as RawPetVerdict & { frames?: number[]; topClass?: 'pet' | 'person' | 'other'; ts?: string };
-          const visit: PetVisit = {
-            id: `hw-visit-${Date.now()}`,
-            timestamp: raw.ts || localIso(),
-            verdict: raw.pet === 1 ? 'PET' : 'NOPET',
-            confidence: raw.conf,
-            frames: raw.frames || [raw.conf, raw.conf, raw.conf],
-            topClass: raw.topClass || (raw.pet === 1 ? 'pet' : 'other'),
-            demo: false,
-          };
-          this.visitRingBuffer = [visit, ...this.visitRingBuffer].slice(0, 50);
-          this.persistVisits();
-          this.emit({
-            type: 'pet',
-            data: {
-              pet: raw.pet,
-              conf: raw.conf,
-              frames: visit.frames,
-              topClass: visit.topClass,
-              ts: visit.timestamp,
-            },
-          });
+          // CAM maps an IR edge to a fixed confidence; this is not a vision verdict.
+          JSON.parse(e.data) as RawPetVerdict;
         } catch (err) {
           console.warn('[RestDevice] Malformed pet event:', err);
         }
@@ -437,8 +358,10 @@ export class RestDeviceService implements DeviceService {
       // 5. Low hopper warning
       es.addEventListener('low_food', (e) => {
         try {
-          const raw = JSON.parse(e.data) as { pct: number };
-          this.emit({ type: 'low_food', data: raw });
+          const raw: unknown = JSON.parse(e.data);
+          if (!isRecord(raw) || !Number.isFinite(raw.pct)) return;
+          // The threshold alert is real, but CAM's percentage (12) is hard-coded.
+          this.emit({ type: 'low_food', data: { pct: -1 } });
         } catch (err) {
           console.warn('[RestDevice] Malformed low_food event:', err);
         }
@@ -511,25 +434,4 @@ export class RestDeviceService implements DeviceService {
     }
   }
 
-  private loadPersistedVisits(): void {
-    try {
-      const raw = localStorage.getItem(HARDWARE_VISITS_STORAGE_KEY);
-      if (raw) {
-        this.visitRingBuffer = JSON.parse(raw);
-      }
-    } catch {
-      this.visitRingBuffer = [];
-    }
-  }
-
-  private persistVisits(): void {
-    try {
-      localStorage.setItem(
-        HARDWARE_VISITS_STORAGE_KEY,
-        JSON.stringify(this.visitRingBuffer)
-      );
-    } catch {
-      /* ignore */
-    }
-  }
 }

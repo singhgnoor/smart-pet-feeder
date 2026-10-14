@@ -9,7 +9,7 @@ interface TopBarProps {
 }
 
 export const TopBar: React.FC<TopBarProps> = ({ onToggleMobileMenu, title }) => {
-  const { connection, link, rssi, isDemo, telemetry } = useDevice();
+  const { connection, link, rssi, isDemo, telemetry, integrationNotice } = useDevice();
   const [timeStr, setTimeStr] = useState<string>('');
 
   useEffect(() => {
@@ -102,6 +102,17 @@ export const TopBar: React.FC<TopBarProps> = ({ onToggleMobileMenu, title }) => 
           >
             <AlertTriangle size={14} />
             <span>UART Link Down</span>
+          </span>
+        )}
+
+        {!isDemo && integrationNotice && (
+          <span
+            className="topbar__badge"
+            style={{ background: '#fffbe6', borderColor: '#ffe58f', color: '#ad6800' }}
+            title={integrationNotice}
+          >
+            <AlertTriangle size={14} />
+            <span>Feeder data unverified</span>
           </span>
         )}
 

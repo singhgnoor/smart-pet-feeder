@@ -4,12 +4,12 @@ import { useDevice } from '../context/DeviceContext';
 import { relative, dateTime } from '../utils/format';
 
 export const LiveCameraView: React.FC = () => {
-  const { snapshot, visits, actions, demo, pending, telemetry } = useDevice();
+  const { snapshot, visits, actions, demo, pending, telemetry, isDemo } = useDevice();
   const [testingAi, setTestingAi] = useState(false);
 
   const latestVisit = visits[0];
-  const petDetected = telemetry?.petPresent || latestVisit?.verdict === 'PET';
-  const confidence = latestVisit?.confidence ?? 94;
+  const petDetected = telemetry?.petPresent ?? (latestVisit ? latestVisit.verdict === 'PET' : null);
+  const confidence = latestVisit?.confidence ?? null;
 
   const handleTakeSnapshot = async () => {
     await actions.refreshSnapshot();
@@ -32,7 +32,7 @@ export const LiveCameraView: React.FC = () => {
   };
 
   // Display the generated realistic pet camera photo, or fallback to snapshot data URL
-  const cameraSrc = snapshot?.url || '/assets/camera-dog.jpg';
+  const cameraSrc = snapshot?.url || (isDemo ? '/assets/camera-dog.jpg' : null);
 
   return (
     <div className="camera-page">
@@ -63,15 +63,14 @@ export const LiveCameraView: React.FC = () => {
               boxShadow: 'var(--shadow-md)',
             }}
           >
-            <img
+            {cameraSrc ? <img
               src={cameraSrc}
               alt="Live feeder camera view of pet"
               style={{ width: '100%', height: '100%', objectFit: 'cover' }}
               onError={(e) => {
-                // If local file fails, fall back to default
-                (e.target as HTMLImageElement).src = '/assets/camera-dog.jpg';
+                if (isDemo) (e.target as HTMLImageElement).src = '/assets/camera-dog.jpg';
               }}
-            />
+            /> : <span style={{ color: '#fff', padding: '24px', textAlign: 'center' }}>No verified camera snapshot available.</span>}
 
             {/* Feed Banner Overlay */}
             <div
@@ -97,11 +96,11 @@ export const LiveCameraView: React.FC = () => {
                   width: '8px',
                   height: '8px',
                   borderRadius: '50%',
-                  background: snapshot?.simulated === false ? '#1890ff' : '#52c41a',
-                  boxShadow: snapshot?.simulated === false ? '0 0 6px #1890ff' : '0 0 6px #52c41a',
+                  background: snapshot?.simulated === false ? '#1890ff' : isDemo ? '#52c41a' : '#8c8c8c',
+                  boxShadow: snapshot?.simulated === false ? '0 0 6px #1890ff' : isDemo ? '0 0 6px #52c41a' : 'none',
                 }}
               />
-              <span>{snapshot?.simulated === false ? 'ESP32-CAM OV2640' : 'SIMULATED FEED'}</span>
+              <span>{snapshot?.simulated === false ? 'ESP32-CAM OV2640' : isDemo ? 'SIMULATED FEED' : 'SNAPSHOT UNAVAILABLE'}</span>
             </div>
 
             {/* Timestamp Watermark Overlay */}
@@ -121,7 +120,7 @@ export const LiveCameraView: React.FC = () => {
             >
               {snapshot?.capturedAt
                 ? dateTime(snapshot.capturedAt)
-                : 'Live · QVGA 320x240'}
+                : isDemo ? 'Simulated preview' : 'No capture timestamp'}
             </div>
           </div>
 
@@ -140,11 +139,11 @@ export const LiveCameraView: React.FC = () => {
             <button
               className="btn btn--amber"
               onClick={handleStartAiCheck}
-              disabled={testingAi}
+              disabled={!demo || testingAi}
               style={{ flex: 1 }}
             >
               <Zap size={16} />
-              <span>{testingAi ? 'Classifying...' : 'Start AI Check'}</span>
+              <span>{testingAi ? 'Classifying...' : demo ? 'Start AI Check' : 'AI unavailable'}</span>
             </button>
           </div>
         </div>
@@ -163,7 +162,7 @@ export const LiveCameraView: React.FC = () => {
             {/* Detection status badge */}
             <div style={{ marginBottom: '20px' }}>
               <div
-                className={`badge ${petDetected ? 'badge--ok' : 'badge--muted'}`}
+                className={`badge ${petDetected === null ? 'badge--muted' : petDetected ? 'badge--ok' : 'badge--muted'}`}
                 style={{ fontSize: '14px', padding: '6px 16px', marginBottom: '16px' }}
               >
                 <span
@@ -174,7 +173,7 @@ export const LiveCameraView: React.FC = () => {
                     background: petDetected ? '#237844' : '#8c8c8c',
                   }}
                 />
-                <span>{petDetected ? 'Pet Detected 🐶' : 'No Pet Detected'}</span>
+                <span>{petDetected === null ? 'No verified verdict' : petDetected ? 'Pet Detected 🐶' : 'No Pet Detected'}</span>
               </div>
 
               {/* Confidence progress bar */}
@@ -189,7 +188,7 @@ export const LiveCameraView: React.FC = () => {
                   }}
                 >
                   <span style={{ color: 'var(--text-muted)' }}>Confidence</span>
-                  <span style={{ color: 'var(--primary-green)' }}>{confidence}%</span>
+                  <span style={{ color: 'var(--primary-green)' }}>{confidence === null ? '—' : `${confidence}%`}</span>
                 </div>
                 <div
                   style={{
@@ -203,7 +202,7 @@ export const LiveCameraView: React.FC = () => {
                   <div
                     style={{
                       height: '100%',
-                      width: `${confidence}%`,
+                      width: `${confidence ?? 0}%`,
                       background: 'var(--primary-green)',
                       borderRadius: '999px',
                       transition: 'width 0.4s ease',
@@ -228,10 +227,10 @@ export const LiveCameraView: React.FC = () => {
               <div style={{ fontSize: '24px' }}>🐶</div>
               <div>
                 <div style={{ fontWeight: 700, fontSize: '14px', color: 'var(--text-main)' }}>
-                  Last detected: {latestVisit?.topClass === 'pet' ? 'Dog' : latestVisit?.topClass ?? 'Dog'}
+                  Last detected: {latestVisit ? (latestVisit.topClass === 'pet' ? 'Pet' : latestVisit.topClass) : 'Unavailable'}
                 </div>
                 <div style={{ fontSize: '12px', color: 'var(--text-light)' }}>
-                  {latestVisit ? relative(new Date(latestVisit.timestamp).getTime()) : '2 minutes ago'}
+                  {latestVisit ? relative(new Date(latestVisit.timestamp).getTime()) : 'No verified visit record'}
                 </div>
               </div>
             </div>

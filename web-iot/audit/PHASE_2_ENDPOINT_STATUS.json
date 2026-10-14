@@ -1,0 +1,26 @@
+{
+  "kind": "phase_2_endpoint_status_overlay",
+  "source_inventory": "endpoint_inventory.json (preserved from phase 1)",
+  "runtime_or_hardware_verified": false,
+  "web_changes": {
+    "202_semantics": "Valid 202 JSON with accepted:true maps to stage cam-accepted; malformed 202 is rejected. No completion is inferred.",
+    "hardware_actions": "Abort, clear, schedule read/write, history read, tare, calibration and config read/write now fail locally with UNSUPPORTED because checked-in WROOM handlers/data do not exist.",
+    "sensor_data": "CAM status is used only for CAM/UART connectivity; telemetry is withheld because WROOM emits no TELEM frame. Synthetic telemetry/log/pet SSE data is ignored.",
+    "camera": "Snapshot must have image/jpeg MIME and a non-empty body. Actual device response remains unverified."
+  },
+  "endpoints": [
+    {"method":"GET","path":"/api/status","source_exists":true,"frontend_hardware_transport_test":"SIMULATED PASS","hardware_status":"NOT VERIFIED","integration_status":"CONTRACT MISMATCH","note":"No WROOM TELEM producer; browser withholds sensor data."},
+    {"method":"POST","path":"/api/feed","source_exists":true,"frontend_hardware_transport_test":"SIMULATED PASS","hardware_status":"BLOCKED","integration_status":"CONTRACT MISMATCH","note":"UI disabled without verifiable telemetry; direct service 202 is CAM acceptance only; no WROOM ACK/ID correlation."},
+    {"method":"POST","path":"/api/abort","source_exists":true,"frontend_hardware_transport_test":"BLOCKED BY CLIENT","hardware_status":"BLOCKED","integration_status":"CONTRACT MISMATCH","note":"WROOM has no ABORT handler; client prevents transport."},
+    {"method":"POST","path":"/api/clear","source_exists":true,"frontend_hardware_transport_test":"BLOCKED BY CLIENT","hardware_status":"BLOCKED","integration_status":"CONTRACT MISMATCH","note":"WROOM has no CLEAR handler; client prevents transport."},
+    {"method":"GET","path":"/api/schedule","source_exists":true,"frontend_hardware_transport_test":"BLOCKED BY CLIENT","hardware_status":"BLOCKED","integration_status":"CONTRACT MISMATCH","note":"CAM RAM echo is not WROOM persistence; client reports unsupported."},
+    {"method":"PUT","path":"/api/schedule","source_exists":true,"frontend_hardware_transport_test":"BLOCKED BY CLIENT","hardware_status":"BLOCKED","integration_status":"CONTRACT MISMATCH","note":"No WROOM handler or schedule storage; client prevents transport."},
+    {"method":"GET","path":"/api/log","source_exists":true,"frontend_hardware_transport_test":"BLOCKED BY CLIENT","hardware_status":"BLOCKED","integration_status":"CONTRACT MISMATCH","note":"CAM buffer remains empty; fabricated SSE logs ignored."},
+    {"method":"GET","path":"/api/snapshot.jpg","source_exists":true,"frontend_hardware_transport_test":"SIMULATED PASS","hardware_status":"BLOCKED","integration_status":"NOT VERIFIED","note":"Fake JPEG MIME/blob smoke test only; hardware and async framebuffer lifetime not tested."},
+    {"method":"POST","path":"/api/tare","source_exists":true,"frontend_hardware_transport_test":"BLOCKED BY CLIENT","hardware_status":"BLOCKED","integration_status":"CONTRACT MISMATCH","note":"No WROOM handler."},
+    {"method":"POST","path":"/api/calibrate","source_exists":true,"frontend_hardware_transport_test":"BLOCKED BY CLIENT","hardware_status":"BLOCKED","integration_status":"CONTRACT MISMATCH","note":"No WROOM handler; CAM can return fixed factor."},
+    {"method":"POST","path":"/api/config","source_exists":true,"frontend_hardware_transport_test":"BLOCKED BY CLIENT","hardware_status":"BLOCKED","integration_status":"CONTRACT MISMATCH","note":"No WROOM handler or readback."},
+    {"method":"GET","path":"/events","source_exists":true,"frontend_hardware_transport_test":"SIMULATED PASS","hardware_status":"BLOCKED","integration_status":"CONTRACT MISMATCH","note":"Fake Vite proxy stream works; device event authenticity/producers and reconnect against CAM unavailable."},
+    {"method":"OPTIONS","path":"/*","source_exists":true,"frontend_hardware_transport_test":"NOT RUN","hardware_status":"BLOCKED","integration_status":"NOT VERIFIED","note":"CAM route was not executed."}
+  ]
+}

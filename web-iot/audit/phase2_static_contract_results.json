@@ -1,0 +1,159 @@
+{
+  "kind": "static_source_contract_scan",
+  "runtime_or_hardware_test": false,
+  "files": {
+    "cam": "esp-code\\ESP-32-CAM-code.ino",
+    "wroom": "esp-code\\ESP_WROOM_32_code.ino",
+    "frontend_client": "src\\services\\restDevice.ts"
+  },
+  "registered_cam_http_routes": [
+    {
+      "method": "GET",
+      "path": "/api/status"
+    },
+    {
+      "method": "POST",
+      "path": "/api/feed"
+    },
+    {
+      "method": "POST",
+      "path": "/api/abort"
+    },
+    {
+      "method": "POST",
+      "path": "/api/clear"
+    },
+    {
+      "method": "GET",
+      "path": "/api/schedule"
+    },
+    {
+      "method": "PUT",
+      "path": "/api/schedule"
+    },
+    {
+      "method": "GET",
+      "path": "/api/log"
+    },
+    {
+      "method": "GET",
+      "path": "/api/snapshot.jpg"
+    },
+    {
+      "method": "POST",
+      "path": "/api/tare"
+    },
+    {
+      "method": "POST",
+      "path": "/api/calibrate"
+    },
+    {
+      "method": "POST",
+      "path": "/api/config"
+    }
+  ],
+  "frontend_api_paths": [
+    "/api/feed",
+    "/api/snapshot.jpg",
+    "/api/status"
+  ],
+  "frontend_calls": [
+    {
+      "method": "POST",
+      "path": "/api/feed"
+    },
+    {
+      "method": "GET",
+      "path": "/api/snapshot.jpg"
+    },
+    {
+      "method": "GET",
+      "path": "/api/status"
+    }
+  ],
+  "frontend_calls_without_cam_method_route": [],
+  "frontend_paths_without_any_cam_route": [],
+  "cam_routes_without_frontend_api_path": [
+    {
+      "method": "POST",
+      "path": "/api/abort"
+    },
+    {
+      "method": "POST",
+      "path": "/api/clear"
+    },
+    {
+      "method": "GET",
+      "path": "/api/schedule"
+    },
+    {
+      "method": "PUT",
+      "path": "/api/schedule"
+    },
+    {
+      "method": "GET",
+      "path": "/api/log"
+    },
+    {
+      "method": "POST",
+      "path": "/api/tare"
+    },
+    {
+      "method": "POST",
+      "path": "/api/calibrate"
+    },
+    {
+      "method": "POST",
+      "path": "/api/config"
+    }
+  ],
+  "cam_uart_command_prefixes": [
+    "ABORT",
+    "CAL",
+    "CFG",
+    "CLEAR",
+    "FEED",
+    "FEED_NOW",
+    "SCHED",
+    "TARE"
+  ],
+  "wroom_uart_command_prefixes": [
+    "FEED_NOW:",
+    "HB:",
+    "VERDICT:"
+  ],
+  "cam_commands_without_wroom_handler": [
+    "ABORT",
+    "CAL",
+    "CFG",
+    "CLEAR",
+    "FEED",
+    "SCHED",
+    "TARE"
+  ],
+  "wroom_emits_telem_frame": false,
+  "wroom_emits_log_frame": true,
+  "cam_sse_event_names": [
+    "log",
+    "low_food",
+    "pet",
+    "telemetry"
+  ],
+  "frontend_sse_event_names": [
+    "error",
+    "log",
+    "low_food",
+    "pet",
+    "status",
+    "telemetry"
+  ],
+  "frontend_sse_events_without_cam_producer": [
+    "error",
+    "status"
+  ],
+  "checks": {
+    "cam_and_wroom_files_found": true,
+    "routes_discovered": true,
+    "known_wroom_feed_handler_discovered": true
+  }
+}

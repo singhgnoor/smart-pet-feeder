@@ -153,12 +153,12 @@ The frontend service layer connects to both real physical hardware and the in-br
 ### Dual Operating Modes
 1. **Physical Hardware (`hardware`)**:
    Communicates with the real ESP32-CAM REST API & Server-Sent Events (`/events`) stream via the non-buffering Vite proxy.
-   - Configured in `web-iot/.env`:
+   - Configured in `web-iot/.env` (the API key is read by the local Vite proxy and is not included in the browser bundle):
      ```bash
      VITE_DEVICE_MODE=hardware
      VITE_ESP32_HOST=192.168.1.100
      VITE_ESP32_PORT=80
-     VITE_DEVICE_API_KEY=change-me
+     DEVICE_API_KEY=replace-with-a-unique-device-key
      ```
    - In Settings ➔ "Network & Hardware", users can view connection diagnostics, test snapshots, and reconnect.
 2. **Demo Simulation (`mock`)**:

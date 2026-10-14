@@ -44,10 +44,10 @@ export const HomeOverview: React.FC<HomeOverviewProps> = ({ onNavigate }) => {
     ? `${telemetry?.fault ?? 'System'} Fault`
     : isDispensing
     ? stateDetails?.label ?? 'Dispensing...'
-    : 'All Good';
+    : telemetry ? 'All Good' : 'Feeder data unavailable';
 
-  const hopperPercent = telemetry?.hopperPct ?? 78;
-  const bowlWeight = telemetry?.bowlWeightG ?? 12;
+  const hopperPercent = telemetry?.hopperPct ?? null;
+  const bowlWeight = telemetry?.bowlWeightG ?? null;
 
   // Recent 4 events
   const recentEvents = events.slice(0, 4);
@@ -98,8 +98,8 @@ export const HomeOverview: React.FC<HomeOverviewProps> = ({ onNavigate }) => {
           <div>
             <div className="stat-card__label">Hopper Level</div>
             <div className="stat-card__value">
-              {hopperPercent}
-              <span className="stat-card__unit">%</span>
+              {hopperPercent ?? '—'}
+              {hopperPercent !== null && <span className="stat-card__unit">%</span>}
             </div>
           </div>
         </div>
@@ -112,8 +112,8 @@ export const HomeOverview: React.FC<HomeOverviewProps> = ({ onNavigate }) => {
           <div>
             <div className="stat-card__label">Bowl Weight</div>
             <div className="stat-card__value">
-              {bowlWeight.toFixed(0)}
-              <span className="stat-card__unit">g</span>
+              {bowlWeight === null ? '—' : bowlWeight.toFixed(0)}
+              {bowlWeight !== null && <span className="stat-card__unit">g</span>}
             </div>
           </div>
         </div>
@@ -153,15 +153,15 @@ export const HomeOverview: React.FC<HomeOverviewProps> = ({ onNavigate }) => {
               marginBottom: '12px',
             }}
           >
-            <Sparkles size={14} /> Feeder Station Ready
+            <Sparkles size={14} /> {telemetry ? 'Feeder Station Ready' : 'Feeder Data Unavailable'}
           </span>
-          <h2 className="feature-banner__title">Your pets are doing great! 🐾</h2>
+          <h2 className="feature-banner__title">{telemetry ? 'Your pets are doing great! 🐾' : 'Feeder readings are unavailable'}</h2>
           <p className="feature-banner__desc">
             {activeFeed
               ? `Currently dispensing ${activeFeed.targetG} g of kibble. Gate is ${
                   telemetry?.gateOpen ? 'OPEN' : 'CLOSED'
                 }.`
-              : nextFeed
+              : nextFeed && bowlWeight !== null
               ? `The bowl has ${bowlWeight.toFixed(
                   0
                 )} g of dry kibble. Next automatic meal is scheduled for ${String(
@@ -170,9 +170,10 @@ export const HomeOverview: React.FC<HomeOverviewProps> = ({ onNavigate }) => {
                   2,
                   '0'
                 )} (${countdown(nextFeed.msUntil)} left).`
-              : `The bowl has ${bowlWeight.toFixed(
+              : bowlWeight !== null ? `The bowl has ${bowlWeight.toFixed(
                   0
-                )} g of dry kibble. Set up feeding schedules or treat your pet anytime!`}
+                )} g of dry kibble. Set up feeding schedules or treat your pet anytime!`
+              : 'No verified WROOM sensor readings are available.'}
           </p>
 
           <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
@@ -230,7 +231,7 @@ export const HomeOverview: React.FC<HomeOverviewProps> = ({ onNavigate }) => {
                 Total Food Dispensed Today
               </span>
               <span style={{ fontSize: '18px', fontWeight: 800, color: 'var(--primary-green)' }}>
-                {telemetry?.dispensedTodayG ?? 0} g
+                {telemetry ? `${telemetry.dispensedTodayG} g` : '—'}
               </span>
             </div>
 
@@ -247,7 +248,7 @@ export const HomeOverview: React.FC<HomeOverviewProps> = ({ onNavigate }) => {
                 Pet Visits Detected Today
               </span>
               <span style={{ fontSize: '16px', fontWeight: 700, color: 'var(--text-main)' }}>
-                {telemetry?.petVisitsToday ?? 0} visits 🐕
+                {telemetry ? `${telemetry.petVisitsToday} visits 🐕` : '—'}
               </span>
             </div>
 
@@ -265,10 +266,10 @@ export const HomeOverview: React.FC<HomeOverviewProps> = ({ onNavigate }) => {
               </span>
               <span
                 className={`badge ${
-                  telemetry?.gateOpen ? 'badge--warn' : 'badge--ok'
+                telemetry ? (telemetry.gateOpen ? 'badge--warn' : 'badge--ok') : 'badge--muted'
                 }`}
               >
-                {telemetry?.gateOpen ? 'Open 🔓' : 'Closed 🔒'}
+                {telemetry ? (telemetry.gateOpen ? 'Open 🔓' : 'Closed 🔒') : 'Unknown'}
               </span>
             </div>
 
@@ -284,7 +285,7 @@ export const HomeOverview: React.FC<HomeOverviewProps> = ({ onNavigate }) => {
                 }}
               >
                 <span>Hopper Capacity (~1.8 kg)</span>
-                <span>{hopperPercent}%</span>
+                <span>{hopperPercent === null ? '—' : `${hopperPercent}%`}</span>
               </div>
               <div
                 style={{
@@ -298,11 +299,11 @@ export const HomeOverview: React.FC<HomeOverviewProps> = ({ onNavigate }) => {
                 <div
                   style={{
                     height: '100%',
-                    width: `${hopperPercent}%`,
+                    width: `${hopperPercent ?? 0}%`,
                     background:
-                      hopperPercent < 15
+                      (hopperPercent ?? 100) < 15
                         ? '#e5484d'
-                        : hopperPercent < 35
+                        : (hopperPercent ?? 100) < 35
                         ? '#e6982b'
                         : 'var(--primary-green)',
                     borderRadius: '999px',

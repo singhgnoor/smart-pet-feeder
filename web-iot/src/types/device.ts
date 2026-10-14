@@ -145,7 +145,8 @@ export interface DeviceStatus {
   /** UART link between the ESP32-CAM and the ESP32-WROOM. */
   link: boolean;
   rssi: number;
-  telemetry: DeviceTelemetry;
+  /** Null when the reported values cannot be distinguished from CAM defaults. */
+  telemetry: DeviceTelemetry | null;
 }
 
 /** Live progress of the job currently running on the feeder (derived client-side). */
@@ -224,12 +225,14 @@ export interface CommandAck {
   accepted: boolean;
   id?: number;
   message?: string;
+  /** An HTTP 202 from the current CAM proves only that the CAM accepted the HTTP request. */
+  stage?: 'cam-accepted' | 'device-accepted' | 'started' | 'completed';
 }
 
 /** Error raised by the service; `code` mirrors HTTP/NAK reasons from the reference. */
 export class DeviceError extends Error {
   constructor(
-    public code: 'LINK_DOWN' | 'RANGE' | 'BUSY' | 'FAULT' | 'QUEUE_FULL' | 'TIMEOUT' | 'INVALID' | 'UNKNOWN',
+    public code: 'LINK_DOWN' | 'RANGE' | 'BUSY' | 'FAULT' | 'QUEUE_FULL' | 'TIMEOUT' | 'INVALID' | 'UNSUPPORTED' | 'UNKNOWN',
     message: string,
   ) {
     super(message);

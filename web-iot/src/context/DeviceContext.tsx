@@ -68,6 +68,7 @@ export interface DeviceContextValue {
   mode: DeviceMode;
   setMode: (mode: DeviceMode) => void;
   isDemo: boolean;
+  integrationNotice: string | null;
   connection: DeviceConnectionState;
   link: boolean;
   rssi: number | null;
@@ -145,6 +146,8 @@ export function DeviceProvider({ children }: { children: ReactNode }) {
   const toast = useToast();
   const [mode, setModeState] = useState<DeviceMode>(getInitialMode);
   const [service, setService] = useState<DeviceService>(() => createDeviceService(getInitialMode()));
+  const serviceRef = useRef(service);
+  const refreshSequenceRef = useRef(0);
 
   const [connection, setConnection] = useState<DeviceConnectionState>('connecting');
   const [link, setLink] = useState(false);
@@ -183,9 +186,21 @@ export function DeviceProvider({ children }: { children: ReactNode }) {
     localStorage.setItem(MODE_STORAGE_KEY, newMode);
     setModeState(newMode);
     const newService = createDeviceService(newMode);
+    serviceRef.current = newService;
     setService(newService);
     setConnection('connecting');
     setLink(false);
+    setRssi(null);
+    setTelemetry(null);
+    setLastHeartbeat(null);
+    setWeightHistory([]);
+    setActiveFeed(null);
+    setSchedule([]);
+    setEvents([]);
+    setVisits([]);
+    setConfig(null);
+    setSnapshot(null);
+    pendingManualRef.current = null;
     toast.push({
       kind: 'info',
       title: newMode === 'hardware' ? 'Hardware Mode Active ⚡' : 'Demo Simulation Mode 🐾',
@@ -199,6 +214,7 @@ export function DeviceProvider({ children }: { children: ReactNode }) {
   /* ---------------- synchronisation ---------------- */
 
   const refreshAll = useCallback(async () => {
+    const sequence = ++refreshSequenceRef.current;
     const [st, sc, lg, cf, vs, sn] = await Promise.allSettled([
       service.getStatus(),
       service.getSchedule(),
@@ -208,14 +224,17 @@ export function DeviceProvider({ children }: { children: ReactNode }) {
       service.getSnapshot(),
     ]);
 
+    // A slow prior-mode request must never overwrite the newly selected transport's state.
+    if (serviceRef.current !== service || sequence !== refreshSequenceRef.current) return;
+
     if (st.status === 'fulfilled') {
       setConnection('connected');
       setLink(st.value.link);
       setRssi(st.value.rssi);
       setTelemetry(st.value.telemetry);
-      setLastHeartbeat(Date.now());
-      prevStateRef.current = st.value.telemetry.state;
-      prevFaultRef.current = st.value.telemetry.fault;
+      setLastHeartbeat(null);
+      prevStateRef.current = st.value.telemetry?.state ?? null;
+      prevFaultRef.current = st.value.telemetry?.fault ?? null;
     } else if (service.mode === 'hardware') {
       setConnection('disconnected');
       setLink(false);
@@ -233,6 +252,14 @@ export function DeviceProvider({ children }: { children: ReactNode }) {
     (state: FeederState, fault: FaultCode | null) => {
       const prev = prevStateRef.current;
       if (isActiveState(state) && (prev === null || !isActiveState(prev))) {
+        if (service.mode === 'hardware') {
+          // No WROOM telemetry or correlated operation IDs exist in this build.
+          // State changes cannot safely be attributed to a dashboard request.
+          setActiveFeed(null);
+          prevStateRef.current = state;
+          prevFaultRef.current = fault;
+          return;
+        }
         const manual = pendingManualRef.current;
         pendingManualRef.current = null;
         const now = new Date();
@@ -383,7 +410,9 @@ export function DeviceProvider({ children }: { children: ReactNode }) {
           toast.push({
             kind: 'warning',
             title: 'Hopper running low 🦴',
-            message: `Only ${evt.data.pct}% left — time to refill the hopper.`,
+            message: evt.data.pct < 0
+              ? 'The device reported a low hopper threshold; exact percentage is unavailable.'
+              : `Only ${evt.data.pct}% left — time to refill the hopper.`,
           });
           return;
         case 'error':
@@ -403,7 +432,9 @@ export function DeviceProvider({ children }: { children: ReactNode }) {
   handlerRef.current = handleEvent;
 
   useEffect(() => {
-    const unsub = service.subscribe((e) => handlerRef.current(e));
+    const unsub = service.subscribe((e) => {
+      if (serviceRef.current === service) handlerRef.current(e);
+    });
     void refreshAll();
     return () => unsub();
   }, [service, refreshAll]);
@@ -428,7 +459,7 @@ export function DeviceProvider({ children }: { children: ReactNode }) {
   const actions = useMemo<DeviceContextValue['actions']>(
     () => ({
       feed: async (g) => {
-        pendingManualRef.current = { grams: g, at: Date.now() };
+        if (service.mode === 'mock') pendingManualRef.current = { grams: g, at: Date.now() };
         const r = await run('feed', () => service.feed(g), 'Feed request rejected');
         if (!r) {
           pendingManualRef.current = null;
@@ -436,8 +467,10 @@ export function DeviceProvider({ children }: { children: ReactNode }) {
         }
         toast.push({
           kind: 'success',
-          title: 'Feed accepted',
-          message: `Dispensing ${g} g — watch the progress below. 🥣`,
+          title: 'Request accepted by CAM',
+          message: service.mode === 'hardware'
+            ? 'The CAM returned HTTP 202. WROOM acceptance, dispensing, and completion are not confirmed.'
+            : `Dispensing ${g} g — watch the progress below. 🥣`,
         });
         return true;
       },
@@ -446,9 +479,9 @@ export function DeviceProvider({ children }: { children: ReactNode }) {
         const r = await run('clear', () => service.clearFault(), 'Could not clear the fault');
         if (r) {
           toast.push({
-            kind: 'success',
-            title: 'Fault cleared',
-            message: 'The feeder is back to Ready. 🐶',
+            kind: 'info',
+            title: 'Fault clear request accepted',
+            message: 'The device has not confirmed that the fault was cleared.',
           });
           prevFaultRef.current = null;
           void service
@@ -470,9 +503,9 @@ export function DeviceProvider({ children }: { children: ReactNode }) {
         if (r) {
           setSchedule(r);
           toast.push({
-            kind: 'success',
-            title: 'Schedule saved 📅',
-            message: `${r.filter((s) => s.enabled).length} meal(s) enabled.`,
+            kind: 'info',
+            title: 'Schedule update accepted',
+            message: 'The CAM echoed the submitted schedule; WROOM storage was not confirmed.',
           });
         }
         return !!r;
@@ -482,9 +515,9 @@ export function DeviceProvider({ children }: { children: ReactNode }) {
         if (r) {
           setConfig(c);
           toast.push({
-            kind: 'success',
-            title: 'Feeding settings saved',
-            message: 'New limits apply to the next feed.',
+            kind: 'info',
+            title: 'Settings update accepted',
+            message: 'The device has not confirmed that the new limits were applied.',
           });
         }
         return !!r;
@@ -492,8 +525,7 @@ export function DeviceProvider({ children }: { children: ReactNode }) {
       tare: async () => {
         const r = await run('tare', () => service.tare(), 'Tare failed');
         if (r) {
-          setCalibration((c) => ({ ...c, lastTaredAt: new Date().toISOString() }));
-          toast.push({ kind: 'success', title: 'Scale tared ⚖️', message: 'The bowl now reads 0 g.' });
+          toast.push({ kind: 'info', title: 'Tare request accepted', message: 'The device has not confirmed that the scale was tared.' });
         }
         return !!r;
       },
@@ -504,16 +536,10 @@ export function DeviceProvider({ children }: { children: ReactNode }) {
           'Calibration failed'
         );
         if (r) {
-          setCalibration((c) => ({
-            ...c,
-            factor: r.factor ?? c.factor,
-            knownMassG: knownG,
-            lastCalibratedAt: new Date().toISOString(),
-          }));
           toast.push({
-            kind: 'success',
-            title: 'Calibration complete',
-            message: `New scale factor: ${r.factor?.toFixed(2) ?? 'updated'} counts/g.`,
+            kind: 'info',
+            title: 'Calibration request accepted',
+            message: 'The device has not confirmed calibration or the reported scale factor.',
           });
         }
         return !!r;
@@ -590,6 +616,9 @@ export function DeviceProvider({ children }: { children: ReactNode }) {
     mode,
     setMode,
     isDemo: service.mode === 'mock',
+    integrationNotice: service.mode === 'hardware'
+      ? 'CAM connectivity is separate from feeder status. This firmware does not provide verifiable WROOM telemetry, command acknowledgements, schedule/config readback, or complete feeding history; affected hardware controls are unavailable.'
+      : null,
     connection,
     link,
     rssi,
@@ -604,7 +633,9 @@ export function DeviceProvider({ children }: { children: ReactNode }) {
     snapshot,
     calibration,
     pending,
-    canOperate: connection === 'connected' && telemetry !== null && (service.mode === 'mock' || link),
+    canOperate: service.mode === 'mock'
+      ? connection === 'connected' && telemetry !== null
+      : false,
     actions,
     demo,
   };

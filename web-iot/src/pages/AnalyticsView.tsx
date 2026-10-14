@@ -16,7 +16,7 @@ import { useDevice } from '../context/DeviceContext';
 import { dateKeyOf } from '../utils/format';
 
 export const AnalyticsView: React.FC = () => {
-  const { events, telemetry } = useDevice();
+  const { events, telemetry, isDemo } = useDevice();
   const [timeframe, setTimeframe] = useState<string>('7d');
 
   // Compute daily totals for the last 7 days
@@ -40,17 +40,19 @@ export const AnalyticsView: React.FC = () => {
       }
     });
 
+    if (!isDemo && events.length === 0) return [];
     return Object.values(days).map((d) => ({
       ...d,
       grams: Math.round(d.grams),
     }));
-  }, [events]);
+  }, [events, isDemo]);
 
   const totalDispensed = dailyData.reduce((sum, d) => sum + d.grams, 0);
   const totalEvents = dailyData.reduce((sum, d) => sum + d.count, 0);
 
   // Bowl weight trend data for today (or simulated 24h curve)
   const bowlTrendData = useMemo(() => {
+    if (!isDemo) return telemetry ? [{ time: 'Latest verified sample', weight: Math.round(telemetry.bowlWeightG) }] : [];
     const currentWeight = telemetry?.bowlWeightG ?? 12;
     return [
       { time: '6 AM', weight: 4 },
@@ -62,7 +64,7 @@ export const AnalyticsView: React.FC = () => {
       { time: '8 PM', weight: 35 },
       { time: '10 PM', weight: Math.round(currentWeight) },
     ];
-  }, [telemetry]);
+  }, [isDemo, telemetry]);
 
   return (
     <div className="analytics-page">
@@ -95,7 +97,7 @@ export const AnalyticsView: React.FC = () => {
             Total Food Dispensed
           </span>
           <div style={{ fontSize: '28px', fontWeight: 800, color: 'var(--text-main)', marginTop: '4px', marginBottom: '16px' }}>
-            {totalDispensed} <span style={{ fontSize: '18px', fontWeight: 600, color: 'var(--text-muted)' }}>g</span>
+            {dailyData.length ? totalDispensed : '—'} <span style={{ fontSize: '18px', fontWeight: 600, color: 'var(--text-muted)' }}>{dailyData.length ? 'g' : ''}</span>
           </div>
 
           <div style={{ height: '140px', width: '100%' }}>
@@ -125,7 +127,7 @@ export const AnalyticsView: React.FC = () => {
             Feeding Events
           </span>
           <div style={{ fontSize: '28px', fontWeight: 800, color: 'var(--text-main)', marginTop: '4px', marginBottom: '16px' }}>
-            {totalEvents} <span style={{ fontSize: '18px', fontWeight: 600, color: 'var(--text-muted)' }}>meals</span>
+            {dailyData.length ? totalEvents : '—'} <span style={{ fontSize: '18px', fontWeight: 600, color: 'var(--text-muted)' }}>{dailyData.length ? 'meals' : ''}</span>
           </div>
 
           <div style={{ height: '140px', width: '100%' }}>
@@ -156,7 +158,7 @@ export const AnalyticsView: React.FC = () => {
             <h3 className="card__title">Bowl Weight Trend</h3>
             <p className="card__subtitle">Continuous load cell reading over the course of today</p>
           </div>
-          <span className="badge badge--ok">Live HX711 Stream</span>
+            <span className={`badge ${isDemo || telemetry ? 'badge--ok' : 'badge--muted'}`}>{isDemo ? 'Simulated HX711 Stream' : telemetry ? 'Verified sensor sample' : 'No verified HX711 stream'}</span>
         </div>
 
         <div style={{ height: '240px', width: '100%', marginTop: '16px' }}>
