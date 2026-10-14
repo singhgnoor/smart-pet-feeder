@@ -1,0 +1,1 @@
+this folder contains a react app that will be used as an IOT hub for this smart pet feeder project

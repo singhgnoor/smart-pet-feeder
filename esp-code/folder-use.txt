@@ -1,0 +1,1 @@
+this folder contains all the ESP related code, that we have to upload in the ESP cam and normal ESP
