@@ -10,11 +10,7 @@
 
 ## Executive Summary
 
-The PawBite (PawPilot) web IoT frontend has been successfully upgraded with a production-grade, dual-mode communication layer. It supports:
-1. **Physical Hardware Mode (`hardware`)**: Communicates with the real ESP32-CAM web server and Server-Sent Events (SSE) telemetry stream via a non-buffering Vite reverse proxy.
-2. **Demo Simulation Mode (`mock`)**: Retains the in-browser simulation of both microcontrollers (ESP32-WROOM sensor state machine and ESP32-CAM vision engine) as an offline fallback and testing environment.
-
-In strict compliance with project constraints, **no ESP firmware files were modified**. All hardware architectural findings, file duplication issues discovered in the repository, and the exact firmware implementation required to achieve end-to-end hardware communication are documented in this report.
+The ESP32-CAM web server and vision hub firmware has now been implemented in [`Arduino_IDE_Codes/ESP-32-CAM-code.ino`](Arduino_IDE_Codes/ESP-32-CAM-code.ino) and [`esp-code/ESP-32-CAM-code.ino`](esp-code/ESP-32-CAM-code.ino). The PawBite (PawPilot) web IoT frontend is fully integrated with a production-grade, dual-mode communication layer.
 
 ---
 
