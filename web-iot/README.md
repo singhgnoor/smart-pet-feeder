@@ -148,31 +148,34 @@ web-iot/
 
 ## 🔌 Hardware Integration & Real ESP32 API
 
-The frontend service layer is decoupled from the UI via the `DeviceService` interface in [`src/services/deviceService.ts`](src/services/deviceService.ts).
+The frontend service layer connects to both real physical hardware and the in-browser simulator via the `DeviceService` contract in [`src/services/deviceService.ts`](src/services/deviceService.ts).
 
-### Protocol Mapping (ESP32-CAM REST & SSE API):
+### Dual Operating Modes
+1. **Physical Hardware (`hardware`)**:
+   Communicates with the real ESP32-CAM REST API & Server-Sent Events (`/events`) stream via the non-buffering Vite proxy.
+   - Configured in `web-iot/.env`:
+     ```bash
+     VITE_DEVICE_MODE=hardware
+     VITE_ESP32_HOST=192.168.1.100
+     VITE_ESP32_PORT=80
+     VITE_DEVICE_API_KEY=change-me
+     ```
+   - In Settings ➔ "Network & Hardware", users can view connection diagnostics, test snapshots, and reconnect.
+2. **Demo Simulation (`mock`)**:
+   Runs an in-browser simulation of the closed-loop state machine, load cell ADC, servo gate, and TinyML vision.
+
+### Protocol Endpoints
 - `GET /api/status` → `getStatus()`
-- `POST /api/feed` with `{"grams": 50}` → `feed(grams)`
-- `POST /api/abort` → `abort()`
-- `POST /api/clear` → `clearFault()`
+- `POST /api/feed` with `{"grams": 50}` → `feed(grams)` (requires `X-API-Key`)
+- `POST /api/abort` → `abort()` (requires `X-API-Key`)
+- `POST /api/clear` → `clearFault()` (requires `X-API-Key`)
 - `GET /api/schedule` → `getSchedule()`
-- `PUT /api/schedule` → `putSchedule(slots)`
+- `PUT /api/schedule` → `putSchedule(slots)` (requires `X-API-Key`)
 - `GET /api/log` → `getLog()`
 - `GET /api/snapshot.jpg` → `getSnapshot()`
-- `POST /api/tare` → `tare()`
-- `POST /api/calibrate` with `{"known_g": 200}` → `calibrate(knownG)`
-- `POST /api/config` → `setConfig(config)`
-- `GET /events` (SSE) → `subscribe(listener)`
+- `POST /api/tare` → `tare()` (requires `X-API-Key`)
+- `POST /api/calibrate` with `{"known_g": 200}` → `calibrate(knownG)` (requires `X-API-Key`)
+- `POST /api/config` → `setConfig(config)` (requires `X-API-Key`)
+- `GET /events` (SSE stream) → `subscribe(listener)`
 
-### Switching to Real Hardware:
-1. Create a `src/services/restDevice.ts` implementing `DeviceService` using `fetch()` and `new EventSource('/events')`.
-2. In [`src/services/deviceService.ts`](src/services/deviceService.ts), update `createDeviceService()`:
-   ```ts
-   export function createDeviceService(): DeviceService {
-     if (import.meta.env.VITE_USE_REAL_DEVICE === 'true') {
-       return new RestDeviceService(import.meta.env.VITE_FEEDER_BASE_URL, 'your-api-key');
-     }
-     return new MockDeviceService();
-   }
-   ```
-No UI components or state hooks need to be changed.
+For complete architectural details, firmware audit findings, and hardware verification steps, refer to [**HARDWARE_INTEGRATION_REPORT.md**](../HARDWARE_INTEGRATION_REPORT.md).

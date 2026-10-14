@@ -16,7 +16,7 @@ import { FAULT_INFO } from '../utils/labels';
 type SettingsTab = 'general' | 'device' | 'camera' | 'network';
 
 export const SettingsView: React.FC = () => {
-  const { config, actions, pending, demo, telemetry, connection, rssi } = useDevice();
+  const { config, actions, pending, demo, telemetry, connection, link, rssi, mode, setMode } = useDevice();
   const confirm = useConfirm();
 
   const [activeTab, setActiveTab] = useState<SettingsTab>('general');
@@ -141,7 +141,7 @@ export const SettingsView: React.FC = () => {
           onClick={() => setActiveTab('network')}
           style={{ border: 'none' }}
         >
-          Network & Demo
+          Network & Hardware
         </button>
       </div>
 
@@ -528,66 +528,220 @@ export const SettingsView: React.FC = () => {
         </div>
       )}
 
-      {/* Tab: Network & Demo */}
+      {/* Tab: Network & Hardware */}
       {activeTab === 'network' && (
-        <div className="card">
-          <div className="card__header">
-            <div>
-              <h3 className="card__title">Network & Simulation Link</h3>
-              <p className="card__subtitle">Simulate connectivity states and hardware shortcuts</p>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
+          {/* 1. Mode Selector Card */}
+          <div className="card" style={{ marginBottom: 0 }}>
+            <div className="card__header">
+              <div>
+                <h3 className="card__title">Connection Mode</h3>
+                <p className="card__subtitle">Choose between live hardware communication and demo simulator</p>
+              </div>
+              <Wifi size={20} color="#567e60" />
             </div>
-            <Wifi size={20} color="#567e60" />
+
+            <div className="grid-2-col" style={{ gap: '16px' }}>
+              {/* Option 1: Hardware Mode */}
+              <div
+                style={{
+                  border: mode === 'hardware' ? '2px solid var(--primary-green)' : '1px solid var(--border-light)',
+                  background: mode === 'hardware' ? '#f6ffed' : 'var(--bg-app)',
+                  borderRadius: 'var(--radius-md)',
+                  padding: '16px',
+                  cursor: 'pointer',
+                  transition: 'all 0.2s ease',
+                }}
+                onClick={() => setMode('hardware')}
+              >
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '8px' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <span style={{ fontSize: '18px' }}>⚡</span>
+                    <strong style={{ fontSize: '15px', color: 'var(--text-main)' }}>Hardware Mode</strong>
+                  </div>
+                  <input
+                    type="radio"
+                    name="deviceMode"
+                    checked={mode === 'hardware'}
+                    onChange={() => setMode('hardware')}
+                  />
+                </div>
+                <p style={{ fontSize: '12px', color: 'var(--text-muted)', lineHeight: 1.4 }}>
+                  Connects to physical ESP32-CAM via REST API and Server-Sent Events (SSE) stream. Forwards requests through Vite dev proxy.
+                </p>
+              </div>
+
+              {/* Option 2: Mock Demo Mode */}
+              <div
+                style={{
+                  border: mode === 'mock' ? '2px solid var(--accent-amber)' : '1px solid var(--border-light)',
+                  background: mode === 'mock' ? '#fefbe6' : 'var(--bg-app)',
+                  borderRadius: 'var(--radius-md)',
+                  padding: '16px',
+                  cursor: 'pointer',
+                  transition: 'all 0.2s ease',
+                }}
+                onClick={() => setMode('mock')}
+              >
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '8px' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <span style={{ fontSize: '18px' }}>🐾</span>
+                    <strong style={{ fontSize: '15px', color: 'var(--text-main)' }}>Demo Simulation</strong>
+                  </div>
+                  <input
+                    type="radio"
+                    name="deviceMode"
+                    checked={mode === 'mock'}
+                    onChange={() => setMode('mock')}
+                  />
+                </div>
+                <p style={{ fontSize: '12px', color: 'var(--text-muted)', lineHeight: 1.4 }}>
+                  Runs a full in-browser IoT simulation of both U1 (WROOM sensor hub) and U2 (CAM web server) with synthetic sensor events.
+                </p>
+              </div>
+            </div>
           </div>
 
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
-            <div
-              style={{
-                display: 'flex',
-                justifyContent: 'space-between',
-                alignItems: 'center',
-                paddingBottom: '16px',
-                borderBottom: '1px solid var(--border-light)',
-              }}
-            >
+          {/* 2. Network Diagnostics Card */}
+          <div className="card" style={{ marginBottom: 0 }}>
+            <div className="card__header">
               <div>
-                <strong style={{ fontSize: '14px', display: 'block', marginBottom: '2px' }}>
-                  Connection Status
-                </strong>
-                <p style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
-                  Current link status between Dashboard and mock IoT feeder service.
-                </p>
+                <h3 className="card__title">Link Status & Telemetry Diagnostics</h3>
+                <p className="card__subtitle">Independent status of browser HTTP/SSE link and microcontrollers UART bus</p>
               </div>
-              <span className={`badge ${connection === 'connected' ? 'badge--ok' : 'badge--danger'}`}>
-                {connection === 'connected' ? 'Connected (Online)' : 'Disconnected (Offline)'}
-              </span>
             </div>
 
-            <div
-              style={{
-                display: 'flex',
-                justifyContent: 'space-between',
-                alignItems: 'center',
-                paddingBottom: '16px',
-                borderBottom: '1px solid var(--border-light)',
-              }}
-            >
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+              {/* Web App to ESP32-CAM HTTP/SSE Link */}
+              <div
+                style={{
+                  display: 'flex',
+                  justifyContent: 'space-between',
+                  alignItems: 'center',
+                  paddingBottom: '14px',
+                  borderBottom: '1px solid var(--border-light)',
+                }}
+              >
+                <div>
+                  <strong style={{ fontSize: '14px', display: 'block', marginBottom: '2px' }}>
+                    Web App ↔ ESP32-CAM (HTTP / SSE)
+                  </strong>
+                  <p style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
+                    Browser EventSource stream (`/events`) and REST endpoints (`/api/*`).
+                  </p>
+                </div>
+                <span className={`badge ${connection === 'connected' ? 'badge--ok' : 'badge--danger'}`}>
+                  {connection === 'connected' ? 'Connected (Online)' : connection === 'connecting' ? 'Connecting...' : 'Disconnected (Offline)'}
+                </span>
+              </div>
+
+              {/* ESP32-CAM to ESP32-WROOM UART Bus Link */}
+              <div
+                style={{
+                  display: 'flex',
+                  justifyContent: 'space-between',
+                  alignItems: 'center',
+                  paddingBottom: '14px',
+                  borderBottom: '1px solid var(--border-light)',
+                }}
+              >
+                <div>
+                  <strong style={{ fontSize: '14px', display: 'block', marginBottom: '2px' }}>
+                    ESP32-CAM ↔ ESP32-WROOM (UART Bus Link)
+                  </strong>
+                  <p style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
+                    115200 8N1 serial bus with 2s heartbeat &lt;HB&gt;. Times out after 6s.
+                  </p>
+                </div>
+                <span className={`badge ${link ? 'badge--ok' : 'badge--danger'}`}>
+                  {link ? 'Link Active (HB ok)' : 'Link Down (503)'}
+                </span>
+              </div>
+
+              {/* Wi-Fi RSSI */}
+              <div
+                style={{
+                  display: 'flex',
+                  justifyContent: 'space-between',
+                  alignItems: 'center',
+                  paddingBottom: '14px',
+                  borderBottom: '1px solid var(--border-light)',
+                }}
+              >
+                <div>
+                  <strong style={{ fontSize: '14px', display: 'block', marginBottom: '2px' }}>
+                    Wi-Fi Signal (RSSI)
+                  </strong>
+                  <p style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
+                    Reported by ESP32 Wi-Fi station.
+                  </p>
+                </div>
+                <span style={{ fontSize: '14px', fontWeight: 700, color: 'var(--text-main)' }}>
+                  {rssi ? `${rssi} dBm` : 'N/A'}
+                </span>
+              </div>
+
+              {/* Target Address Info */}
+              <div
+                style={{
+                  display: 'flex',
+                  justifyContent: 'space-between',
+                  alignItems: 'center',
+                  paddingBottom: '14px',
+                }}
+              >
+                <div>
+                  <strong style={{ fontSize: '14px', display: 'block', marginBottom: '2px' }}>
+                    Target Hardware Address
+                  </strong>
+                  <p style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
+                    Configured in `.env` (proxied by Vite during development).
+                  </p>
+                </div>
+                <span style={{ fontFamily: 'monospace', fontSize: '13px', background: 'var(--bg-app)', padding: '4px 10px', borderRadius: '4px' }}>
+                  http://{import.meta.env.VITE_ESP32_HOST || '192.168.1.100'}:{import.meta.env.VITE_ESP32_PORT || '80'}
+                </span>
+              </div>
+            </div>
+          </div>
+
+          {/* 3. Actions / Controls depending on Mode */}
+          <div className="card">
+            <div className="card__header">
               <div>
-                <strong style={{ fontSize: '14px', display: 'block', marginBottom: '2px' }}>
-                  Simulated Wi-Fi RSSI
-                </strong>
-                <p style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
-                  Signal strength reported by ESP32 Wi-Fi station.
+                <h3 className="card__title">
+                  {mode === 'hardware' ? 'Hardware Diagnostics & Reconnect' : 'Simulation Test Controls'}
+                </h3>
+                <p className="card__subtitle">
+                  {mode === 'hardware' ? 'Interact directly with physical hardware link' : 'Simulate edge cases in software'}
                 </p>
               </div>
-              <span style={{ fontSize: '14px', fontWeight: 700, color: 'var(--text-main)' }}>
-                {rssi ? `${rssi} dBm` : 'N/A'}
-              </span>
             </div>
 
-            <div>
-              <strong style={{ fontSize: '14px', display: 'block', marginBottom: '10px' }}>
-                Simulation Controls
-              </strong>
+            {mode === 'hardware' ? (
+              <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
+                <button
+                  className="btn btn--primary"
+                  onClick={() => actions.reconnect()}
+                  disabled={pending.reconnect}
+                >
+                  <Wifi size={14} />
+                  <span>Reconnect to ESP32</span>
+                </button>
+                <button
+                  className="btn btn--secondary"
+                  onClick={() => actions.refreshSnapshot()}
+                  disabled={pending.snapshot}
+                >
+                  <span>Test Camera Snapshot</span>
+                </button>
+                {connection !== 'connected' && (
+                  <p style={{ fontSize: '13px', color: '#cf1322', width: '100%', marginTop: '8px' }}>
+                    ⚠️ Hardware device unreachable at {import.meta.env.VITE_ESP32_HOST || '192.168.1.100'}. Switch to "Demo Simulation" mode above if physical hardware is not powered on.
+                  </p>
+                )}
+              </div>
+            ) : (
               <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
                 <button
                   className="btn btn--secondary"
@@ -596,7 +750,6 @@ export const SettingsView: React.FC = () => {
                   <WifiOff size={14} />
                   <span>Simulate Connection Loss</span>
                 </button>
-
                 <button
                   className="btn btn--primary"
                   onClick={() => actions.reconnect()}
@@ -605,14 +758,12 @@ export const SettingsView: React.FC = () => {
                   <Wifi size={14} />
                   <span>Reconnect Feeder</span>
                 </button>
-
                 <button
                   className="btn btn--amber"
                   onClick={() => demo?.refillHopper()}
                 >
                   Refill Hopper (100%)
                 </button>
-
                 <button
                   className="btn btn--secondary"
                   onClick={() => demo?.emptyBowl()}
@@ -620,7 +771,7 @@ export const SettingsView: React.FC = () => {
                   Lick Bowl Clean (0 g)
                 </button>
               </div>
-            </div>
+            )}
           </div>
         </div>
       )}

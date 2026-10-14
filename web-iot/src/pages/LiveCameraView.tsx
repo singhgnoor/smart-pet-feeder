@@ -16,12 +16,19 @@ export const LiveCameraView: React.FC = () => {
   };
 
   const handleStartAiCheck = async () => {
-    if (!demo) return;
-    setTestingAi(true);
-    demo.triggerVisit('pet');
-    setTimeout(() => {
-      setTestingAi(false);
-    }, 1500);
+    if (demo) {
+      setTestingAi(true);
+      demo.triggerVisit('pet');
+      setTimeout(() => {
+        setTestingAi(false);
+      }, 1500);
+    } else {
+      setTestingAi(true);
+      await actions.refreshSnapshot();
+      setTimeout(() => {
+        setTestingAi(false);
+      }, 1000);
+    }
   };
 
   // Display the generated realistic pet camera photo, or fallback to snapshot data URL
@@ -66,7 +73,7 @@ export const LiveCameraView: React.FC = () => {
               }}
             />
 
-            {/* Simulated Banner Overlay */}
+            {/* Feed Banner Overlay */}
             <div
               style={{
                 position: 'absolute',
@@ -90,11 +97,11 @@ export const LiveCameraView: React.FC = () => {
                   width: '8px',
                   height: '8px',
                   borderRadius: '50%',
-                  background: '#52c41a',
-                  boxShadow: '0 0 6px #52c41a',
+                  background: snapshot?.simulated === false ? '#1890ff' : '#52c41a',
+                  boxShadow: snapshot?.simulated === false ? '0 0 6px #1890ff' : '0 0 6px #52c41a',
                 }}
               />
-              <span>SIMULATED FEED</span>
+              <span>{snapshot?.simulated === false ? 'ESP32-CAM OV2640' : 'SIMULATED FEED'}</span>
             </div>
 
             {/* Timestamp Watermark Overlay */}

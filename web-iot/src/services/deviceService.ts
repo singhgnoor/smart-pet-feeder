@@ -6,10 +6,9 @@
  *
  *   Browser ──HTTP/SSE──▶ ESP32-CAM (U2) ──UART <CMD*HH>──▶ ESP32-WROOM (U1)
  *
- * The UI talks ONLY to this interface. Today it is implemented by `MockDeviceService`
- * (a full in-browser simulation of U1 + U2). A future `RestDeviceService` can implement the
- * same interface with `fetch()` and `EventSource` without touching any component.
- * See README.md → "Switching to the real ESP32 API".
+ * The UI talks ONLY to this interface. It is implemented by:
+ *  - `RestDeviceService`: communicates with the real ESP32-CAM HTTP server and SSE stream.
+ *  - `MockDeviceService`: full in-browser simulation of U1 + U2 for development/testing.
  */
 import type {
   CommandAck,
@@ -23,10 +22,13 @@ import type {
   Snapshot,
 } from '../types/device';
 import { MockDeviceService } from './mockDevice';
+import { RestDeviceService } from './restDevice';
+
+export type DeviceMode = 'hardware' | 'mock';
 
 export interface DeviceService {
-  /** 'mock' while running the in-browser simulation. */
-  readonly mode: 'mock' | 'rest';
+  /** 'hardware' when communicating with the physical ESP32-CAM, 'mock' when simulating. */
+  readonly mode: DeviceMode;
 
   /** GET /api/status → `{link, rssi, state, telem}` */
   getStatus(): Promise<DeviceStatus>;
@@ -57,7 +59,7 @@ export interface DeviceService {
   getConfig(): Promise<FeederConfig>;
   /**
    * Recent TinyML verdicts. The real device only pushes these as SSE `pet` events, so a REST
-   * implementation would keep a small client-side ring buffer.
+   * implementation keeps a client-side ring buffer.
    */
   getPetVisits(): Promise<PetVisit[]>;
 
@@ -83,10 +85,18 @@ export interface DemoControls {
   reset(): Promise<void>;
 }
 
+export { MockDeviceService, RestDeviceService };
+
 /**
- * Factory. Swap the implementation here when the hardware is ready, e.g.
- *   return new RestDeviceService(import.meta.env.VITE_FEEDER_URL, apiKey);
+ * Factory. Creates either real hardware REST service or mock simulation service.
  */
-export function createDeviceService(): DeviceService {
+export function createDeviceService(mode?: DeviceMode): DeviceService {
+  const chosenMode =
+    mode ??
+    ((import.meta.env.VITE_DEVICE_MODE as DeviceMode) === 'hardware' ? 'hardware' : 'mock');
+
+  if (chosenMode === 'hardware') {
+    return new RestDeviceService();
+  }
   return new MockDeviceService();
 }

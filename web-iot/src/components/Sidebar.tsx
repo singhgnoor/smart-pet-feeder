@@ -94,21 +94,19 @@ export const Sidebar: React.FC<SidebarProps> = ({
             className={`status-dot ${isOnline ? 'status-dot--pulse' : 'status-dot--offline'}`}
           />
           <span>{isOnline ? 'Feeder Online' : 'Feeder Offline'}</span>
-          {isDemo && (
-            <span
-              style={{
-                marginLeft: 'auto',
-                fontSize: '10px',
-                padding: '2px 6px',
-                background: '#fef5e6',
-                color: '#e6982b',
-                borderRadius: '4px',
-                fontWeight: 700,
-              }}
-            >
-              DEMO
-            </span>
-          )}
+          <span
+            style={{
+              marginLeft: 'auto',
+              fontSize: '10px',
+              padding: '2px 6px',
+              background: isDemo ? '#fef5e6' : '#f6ffed',
+              color: isDemo ? '#e6982b' : '#389e0d',
+              borderRadius: '4px',
+              fontWeight: 700,
+            }}
+          >
+            {isDemo ? 'DEMO' : 'HW'}
+          </span>
         </div>
       </div>
     </aside>
