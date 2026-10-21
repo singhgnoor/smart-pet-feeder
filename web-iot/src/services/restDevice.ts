@@ -157,8 +157,9 @@ export class RestDeviceService implements DeviceService {
 
   /** POST /api/feed {"grams": number} → 202 { id, accepted } */
   async feed(grams: number): Promise<CommandAck> {
-    if (grams < 5 || grams > 200) {
-      throw new DeviceError('RANGE', 'Portion size must be between 5 g and 200 g');
+    const validPortions = [10, 20, 30, 50];
+    if (!validPortions.includes(grams)) {
+      throw new DeviceError('RANGE', 'Manual portion must be 10 g, 20 g, 30 g, or 50 g');
     }
     return this.request<CommandAck>('/api/feed', {
       method: 'POST',
@@ -169,12 +170,12 @@ export class RestDeviceService implements DeviceService {
 
   /** POST /api/abort → 202 */
   async abort(): Promise<CommandAck> {
-    throw unsupported('Abort');
+    return this.request<CommandAck>('/api/abort', { method: 'POST' });
   }
 
   /** POST /api/clear → 202 (clears latched JAM / SENSOR fault) */
   async clearFault(): Promise<CommandAck> {
-    throw unsupported('Fault clearing');
+    return this.request<CommandAck>('/api/clear', { method: 'POST' });
   }
 
   /** GET /api/schedule → [{ i, hh, mm, g, en }, ...] */
@@ -240,7 +241,7 @@ export class RestDeviceService implements DeviceService {
 
   /** POST /api/tare → 202 */
   async tare(): Promise<CommandAck> {
-    throw unsupported('Scale tare');
+    return this.request<CommandAck>('/api/tare', { method: 'POST' });
   }
 
   /** POST /api/calibrate {"known_g": number} → 202 { accepted, factor } */

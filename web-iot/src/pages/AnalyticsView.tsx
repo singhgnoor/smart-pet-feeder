@@ -19,17 +19,19 @@ export const AnalyticsView: React.FC = () => {
   const { events, telemetry, isDemo } = useDevice();
   const [timeframe, setTimeframe] = useState<string>('7d');
 
-  // Compute daily totals for the last 7 days
+  // Compute daily totals for selected timeframe (7d, 14d, 30d)
   const dailyData = useMemo(() => {
     const days: { [key: string]: { day: string; grams: number; count: number } } = {};
     const dayNames = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
     const now = new Date();
+    const numDays = timeframe === '30d' ? 30 : timeframe === '14d' ? 14 : 7;
 
-    for (let i = 6; i >= 0; i--) {
+    for (let i = numDays - 1; i >= 0; i--) {
       const d = new Date(now);
       d.setDate(d.getDate() - i);
       const k = dateKeyOf(d);
-      days[k] = { day: dayNames[d.getDay()], grams: 0, count: 0 };
+      const label = numDays > 7 ? `${d.getMonth() + 1}/${d.getDate()}` : dayNames[d.getDay()];
+      days[k] = { day: label, grams: 0, count: 0 };
     }
 
     events.forEach((ev) => {
@@ -45,7 +47,7 @@ export const AnalyticsView: React.FC = () => {
       ...d,
       grams: Math.round(d.grams),
     }));
-  }, [events, isDemo]);
+  }, [events, isDemo, timeframe]);
 
   const totalDispensed = dailyData.reduce((sum, d) => sum + d.grams, 0);
   const totalEvents = dailyData.reduce((sum, d) => sum + d.count, 0);

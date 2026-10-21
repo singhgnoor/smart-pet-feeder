@@ -239,10 +239,32 @@ void clockService(unsigned long now) {
 }
 
 void commService(unsigned long now) {
-  // 1. Send Heartbeat to CAM
-  if (now - lastHbMs > 2000) {
+  // 1. Send Heartbeat & Telemetry to CAM every 1-2s (or 250ms when active)
+  bool isActiveDispense = (currentState == ST_DISPENSE || currentState == ST_TOPUP || currentState == ST_WIGGLE);
+  unsigned long telemInterval = isActiveDispense ? 250 : 1000;
+  
+  if (now - lastHbMs > telemInterval) {
     lastHbMs = now;
-    Serial2.printf("<HB:%lu>\n", millis() / 1000);
+    
+    const char* stStr = "IDLE";
+    switch (currentState) {
+      case ST_IDLE: stStr = "IDLE"; break;
+      case ST_PRECHECK: stStr = "PRECHECK"; break;
+      case ST_WAIT_PET: stStr = "WAIT_PET"; break;
+      case ST_DISPENSE: stStr = "DISPENSING"; break;
+      case ST_WIGGLE: stStr = "WIGGLE"; break;
+      case ST_SETTLE: stStr = "SETTLING"; break;
+      case ST_TOPUP: stStr = "TOPUP"; break;
+      case ST_REPORT: stStr = "REPORT"; break;
+      case ST_FAULT: stStr = "JAM"; break;
+    }
+    
+    int isGateOpen = (currentState == ST_DISPENSE || currentState == ST_TOPUP || currentState == ST_WIGGLE) ? 1 : 0;
+    int isIrTripped = (digitalRead(PIN_IR_OUT) == LOW) ? 1 : 0;
+    
+    // Broadcast compact telemetry frame: <TELEM:weight,hopper,state,ir,dayGrams,gateOpen>
+    Serial2.printf("<TELEM:%.1f,%d,%s,%d,%.1f,%d>\n",
+      currentWeightGrams, hopperPercent, stStr, isIrTripped, dayGramsDispensed, isGateOpen);
   }
   
   // 2. Read incoming commands from CAM
@@ -252,15 +274,51 @@ void commService(unsigned long now) {
     if (msg.startsWith("<") && msg.endsWith(">")) {
       msg = msg.substring(1, msg.length() - 1);
       
-      // Parse manual feed command e.g., FEED_NOW:50
+      // Parse manual feed command with fixed preset portions (10, 20, 30, 50 g)
       if (msg.startsWith("FEED_NOW:")) {
         int g = msg.substring(9).toInt();
-        if (currentState == ST_IDLE) {
-          targetGrams = (float)g;
-          currentState = ST_PRECHECK; // Kick off the state machine
-          Serial.printf("Manual feed requested: %dg\n", g);
+        if (g == 10 || g == 20 || g == 30 || g == 50) {
+          if (currentState == ST_IDLE) {
+            targetGrams = (float)g;
+            currentState = ST_PRECHECK; // Kick off the state machine
+            Serial.printf("Manual feed accepted: %dg\n", g);
+            Serial2.printf("<ACK:FEED:%d>\n", g);
+          } else {
+            Serial.println("Manual feed rejected: feeder busy or fault");
+            Serial2.println("<ERR:BUSY>");
+          }
+        } else {
+          Serial.printf("Rejected manual feed: %dg (only 10, 20, 30, 50g preset portions supported)\n", g);
+          Serial2.printf("<ERR:INVALID_PORTION:%d>\n", g);
         }
       } 
+      // Abort active feed
+      else if (msg.equals("ABORT")) {
+        if (currentState != ST_IDLE && currentState != ST_FAULT) {
+          if (gate.attached()) {
+            gate.write(10);
+            delay(100);
+            gate.detach();
+          }
+          currentState = ST_REPORT;
+          Serial.println("Feed aborted by user command.");
+          Serial2.println("<ACK:ABORT>");
+        }
+      }
+      // Clear latched fault
+      else if (msg.equals("CLEAR")) {
+        if (currentState == ST_FAULT) {
+          currentState = ST_IDLE;
+          Serial.println("Fault cleared via UI command.");
+          Serial2.println("<ACK:CLEAR>");
+        }
+      }
+      // Tare scale
+      else if (msg.equals("TARE")) {
+        scale.tare();
+        Serial.println("Scale tared to 0g.");
+        Serial2.println("<ACK:TARE>");
+      }
       // Parse AI verdict
       else if (msg.startsWith("VERDICT:PET")) {
         if (currentState == ST_WAIT_PET) {

@@ -10,21 +10,17 @@ import { HomeOverview } from './pages/HomeOverview';
 import { FeedNowView } from './pages/FeedNowView';
 import { ScheduleView } from './pages/ScheduleView';
 import { LiveCameraView } from './pages/LiveCameraView';
-import { FeedingLogsView } from './pages/FeedingLogsView';
 import { AnalyticsView } from './pages/AnalyticsView';
-import { DeviceStatusView } from './pages/DeviceStatusView';
 import { SettingsView } from './pages/SettingsView';
 
 import './styles/app.css';
 
 const TAB_TITLES: Record<NavTab, string> = {
   home: 'PawBite · Overview',
-  feed: 'Feed Now · Manual Dispenser',
+  feed: 'Feed Now · Manual Dispenser & Logs',
   schedule: 'Feeding Schedule · Automatic Meals',
   camera: 'Pet Camera · Live Vision',
-  logs: 'Feeding History & Activity Logs',
   analytics: 'Analytics & Consumption Trends',
-  status: 'Device Hardware & Sensor Health',
   settings: 'System Configuration & Controls',
 };
 
@@ -63,9 +59,7 @@ const DashboardContent: React.FC = () => {
           {currentTab === 'feed' && <FeedNowView />}
           {currentTab === 'schedule' && <ScheduleView />}
           {currentTab === 'camera' && <LiveCameraView />}
-          {currentTab === 'logs' && <FeedingLogsView />}
           {currentTab === 'analytics' && <AnalyticsView />}
-          {currentTab === 'status' && <DeviceStatusView />}
           {currentTab === 'settings' && <SettingsView />}
         </main>
       </div>

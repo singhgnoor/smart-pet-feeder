@@ -4,9 +4,7 @@ import {
   UtensilsCrossed,
   CalendarClock,
   Camera,
-  FileText,
   TrendingUp,
-  Activity,
   Settings,
 } from 'lucide-react';
 import { useDevice } from '../context/DeviceContext';
@@ -16,9 +14,7 @@ export type NavTab =
   | 'feed'
   | 'schedule'
   | 'camera'
-  | 'logs'
   | 'analytics'
-  | 'status'
   | 'settings';
 
 interface SidebarProps {
@@ -42,9 +38,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
     { id: 'feed' as NavTab, label: 'Feed Now', icon: UtensilsCrossed },
     { id: 'schedule' as NavTab, label: 'Schedule', icon: CalendarClock },
     { id: 'camera' as NavTab, label: 'Live Camera', icon: Camera },
-    { id: 'logs' as NavTab, label: 'Logs', icon: FileText },
     { id: 'analytics' as NavTab, label: 'Analytics', icon: TrendingUp },
-    { id: 'status' as NavTab, label: 'Device Status', icon: Activity },
     { id: 'settings' as NavTab, label: 'Settings', icon: Settings },
   ];
 

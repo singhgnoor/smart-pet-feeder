@@ -145,10 +145,8 @@ void setup() {
       StaticJsonDocument<128> doc;
       deserializeJson(doc, data, len);
       int g = doc["grams"] | 0;
-      if (g < 5 || g > 200) { req->send(400, "application/json", "{\"error\":\"RANGE\"}"); return; }
-      // Send both FEED_NOW and FEED formats for complete compatibility across U1 firmware versions
+      if (g != 10 && g != 20 && g != 30 && g != 50) { req->send(400, "application/json", "{\"error\":\"RANGE\"}"); return; }
       sendUartCmd("FEED_NOW:" + String(g));
-      sendUartCmd("FEED:" + String(g));
       req->send(202, "application/json", "{\"accepted\":true,\"id\":1}");
     });
 

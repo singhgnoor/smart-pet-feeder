@@ -255,8 +255,9 @@ export class MockDeviceService implements DeviceService {
   }
 
   async feed(grams: number): Promise<CommandAck> {
-    if (!Number.isFinite(grams) || grams < 5 || grams > 250) {
-      throw new DeviceError('RANGE', 'Portion must be between 5 g and 250 g.');
+    const validPortions = [10, 20, 30, 50];
+    if (!Number.isFinite(grams) || !validPortions.includes(grams)) {
+      throw new DeviceError('RANGE', 'Manual portion must be 10 g, 20 g, 30 g, or 50 g.');
     }
     return this.roundTrip(() => {
       if (this.st === 'FAULT') throw new DeviceError('FAULT', 'The feeder is in a fault state. Clear the fault first.');

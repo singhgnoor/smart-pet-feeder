@@ -20,9 +20,7 @@ export const BottomNav: React.FC<BottomNavProps> = ({
   onOpenMenu,
 }) => {
   const isMoreActive =
-    currentTab === 'logs' ||
     currentTab === 'analytics' ||
-    currentTab === 'status' ||
     currentTab === 'settings';
 
   return (

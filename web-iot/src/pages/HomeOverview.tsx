@@ -9,8 +9,8 @@ import {
 } from 'lucide-react';
 import { useDevice } from '../context/DeviceContext';
 import { nextFeeding } from '../utils/schedule';
-import { countdown, dateTime, grams } from '../utils/format';
-import { STATE_INFO, RESULT_INFO } from '../utils/labels';
+import { countdown } from '../utils/format';
+import { STATE_INFO } from '../utils/labels';
 import type { NavTab } from '../components/Sidebar';
 
 interface HomeOverviewProps {
@@ -18,7 +18,7 @@ interface HomeOverviewProps {
 }
 
 export const HomeOverview: React.FC<HomeOverviewProps> = ({ onNavigate }) => {
-  const { telemetry, schedule, events, activeFeed, connection } = useDevice();
+  const { telemetry, schedule, activeFeed, connection } = useDevice();
 
   const nextFeed = schedule.length > 0 ? nextFeeding(schedule) : null;
   const isOnline = connection === 'connected';
@@ -48,9 +48,6 @@ export const HomeOverview: React.FC<HomeOverviewProps> = ({ onNavigate }) => {
 
   const hopperPercent = telemetry?.hopperPct ?? null;
   const bowlWeight = telemetry?.bowlWeightG ?? null;
-
-  // Recent 4 events
-  const recentEvents = events.slice(0, 4);
 
   return (
     <div className="home-page">
@@ -315,84 +312,135 @@ export const HomeOverview: React.FC<HomeOverviewProps> = ({ onNavigate }) => {
           </div>
         </div>
 
-        {/* Card: Recent Activity */}
+        {/* Card: Station & Pet Status (Non-repetitive station summary) */}
         <div className="card" style={{ marginBottom: 0 }}>
           <div className="card__header">
             <div>
-              <h3 className="card__title">Recent Activity</h3>
-              <p className="card__subtitle">Latest feeding events</p>
+              <h3 className="card__title">Station & Pet Status</h3>
+              <p className="card__subtitle">Hardware overview & quick controls</p>
             </div>
-            <button
-              className="btn btn--ghost btn--sm"
-              onClick={() => onNavigate('logs')}
-              style={{ gap: '4px' }}
-            >
-              <span>View all</span>
-              <ArrowRight size={14} />
-            </button>
+            <span style={{ fontSize: '20px' }}>🐾</span>
           </div>
 
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-            {recentEvents.length === 0 ? (
-              <div
-                style={{
-                  textAlign: 'center',
-                  padding: '30px 10px',
-                  color: 'var(--text-muted)',
-                  fontSize: '13px',
-                }}
-              >
-                No feeding events logged yet.
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+            {/* Next Scheduled Meal */}
+            <div
+              style={{
+                display: 'flex',
+                justifyContent: 'space-between',
+                alignItems: 'center',
+                paddingBottom: '12px',
+                borderBottom: '1px solid var(--border-light)',
+              }}
+            >
+              <div>
+                <div style={{ fontWeight: 600, color: 'var(--text-main)', fontSize: '14px' }}>
+                  Next Automated Meal
+                </div>
+                <div style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
+                  {nextFeed
+                    ? `Slot ${nextFeed.slot.hour.toString().padStart(2, '0')}:${nextFeed.slot.minute.toString().padStart(2, '0')} (${nextFeed.slot.portionG} g)`
+                    : 'No automatic schedule active'}
+                </div>
               </div>
-            ) : (
-              recentEvents.map((evt) => {
-                const info = RESULT_INFO[evt.result];
-                return (
-                  <div
-                    key={evt.id}
-                    style={{
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'space-between',
-                      padding: '10px 12px',
-                      background: 'var(--bg-app)',
-                      borderRadius: 'var(--radius-md)',
-                      fontSize: '13px',
-                    }}
-                  >
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                      <span style={{ fontSize: '18px' }}>{info.emoji}</span>
-                      <div>
-                        <div style={{ fontWeight: 700, color: 'var(--text-main)' }}>
-                          {evt.source === 'scheduled' ? 'Scheduled Meal' : 'Manual Feed'}
-                        </div>
-                        <div style={{ fontSize: '11px', color: 'var(--text-light)' }}>
-                          {dateTime(evt.timestamp)}
-                        </div>
-                      </div>
-                    </div>
+              <button
+                className="btn btn--secondary btn--sm"
+                onClick={() => onNavigate('schedule')}
+                style={{ gap: '4px' }}
+              >
+                <span>Schedule</span>
+                <ArrowRight size={14} />
+              </button>
+            </div>
 
-                    <div style={{ textAlign: 'right' }}>
-                      <div style={{ fontWeight: 700, color: 'var(--text-main)' }}>
-                        {grams(evt.dispensedG)}
-                      </div>
-                      <span
-                        className={`badge ${
-                          info.tone === 'ok'
-                            ? 'badge--ok'
-                            : info.tone === 'danger'
-                            ? 'badge--danger'
-                            : 'badge--warn'
-                        }`}
-                        style={{ fontSize: '10px', padding: '2px 8px' }}
-                      >
-                        {info.label}
-                      </span>
-                    </div>
-                  </div>
-                );
-              })
-            )}
+            {/* Pet Detection / Camera */}
+            <div
+              style={{
+                display: 'flex',
+                justifyContent: 'space-between',
+                alignItems: 'center',
+                paddingBottom: '12px',
+                borderBottom: '1px solid var(--border-light)',
+              }}
+            >
+              <div>
+                <div style={{ fontWeight: 600, color: 'var(--text-main)', fontSize: '14px' }}>
+                  Pet Presence & Camera
+                </div>
+                <div style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
+                  {telemetry?.petPresent
+                    ? 'Pet detected at the station 🐕'
+                    : 'No pet currently at the bowl'}
+                </div>
+              </div>
+              <button
+                className="btn btn--secondary btn--sm"
+                onClick={() => onNavigate('camera')}
+                style={{ gap: '4px' }}
+              >
+                <span>Camera</span>
+                <ArrowRight size={14} />
+              </button>
+            </div>
+
+            {/* Feeder Link */}
+            <div
+              style={{
+                display: 'flex',
+                justifyContent: 'space-between',
+                alignItems: 'center',
+                paddingBottom: '12px',
+                borderBottom: '1px solid var(--border-light)',
+              }}
+            >
+              <div>
+                <div style={{ fontWeight: 600, color: 'var(--text-main)', fontSize: '14px' }}>
+                  Feeder Link & Diagnostics
+                </div>
+                <div style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
+                  {isOnline ? 'ESP32 connected & ready' : 'Hardware offline'}
+                </div>
+              </div>
+              <button
+                className="btn btn--secondary btn--sm"
+                onClick={() => onNavigate('settings')}
+                style={{ gap: '4px' }}
+              >
+                <span>Diagnostics</span>
+                <ArrowRight size={14} />
+              </button>
+            </div>
+
+            {/* Consolidated Logs & History Notice */}
+            <div
+              style={{
+                marginTop: '4px',
+                padding: '12px 14px',
+                background: 'var(--bg-app)',
+                borderRadius: 'var(--radius-md)',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                gap: '12px',
+              }}
+            >
+              <div>
+                <div style={{ fontWeight: 700, fontSize: '13px', color: 'var(--text-main)' }}>
+                  Feeding History & Logs
+                </div>
+                <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>
+                  All feeding records & dispense history are in Feed Now.
+                </div>
+              </div>
+              <button
+                className="btn btn--primary btn--sm"
+                onClick={() => onNavigate('feed')}
+                style={{ gap: '4px', whiteSpace: 'nowrap' }}
+              >
+                <span>Feed Now</span>
+                <ArrowRight size={14} />
+              </button>
+            </div>
           </div>
         </div>
       </div>
