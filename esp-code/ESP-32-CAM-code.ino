@@ -1,4 +1,5 @@
 #include "esp_camera.h"
+#include "img_converters.h"
 #include <WiFi.h>
 #include <ESPAsyncWebServer.h>
 #include <ArduinoJson.h>
@@ -41,6 +42,7 @@ const char* API_KEY   = "change-me";
 AsyncWebServer server(80);
 AsyncEventSource events("/events");
 
+bool camJpeg = false;
 bool u1LinkActive = false;
 unsigned long lastHeartbeatMs = 0;
 String latestTelemetryJson = "{\"t\":\"12:00:00\",\"w\":0.0,\"hop\":80,\"st\":\"IDLE\",\"ir\":0,\"vis\":0,\"day\":0.0,\"gate\":0}";
@@ -83,7 +85,19 @@ void initCamera() {
   config.frame_size   = FRAMESIZE_QVGA; // 320x240
   config.jpeg_quality = 12;
   config.fb_count     = 1;
-  esp_camera_init(&config);
+  if (esp_camera_init(&config) == ESP_OK) {
+    camJpeg = true;
+  } else {
+    // Sensor has no hardware JPEG: capture RGB565 and encode in software
+    esp_camera_deinit();
+    config.pixel_format = PIXFORMAT_RGB565;
+    if (esp_camera_init(&config) != ESP_OK) {
+      Serial.println("Camera init failed");
+      return;
+    }
+  }
+  sensor_t* s = esp_camera_sensor_get();
+  Serial.printf("Camera sensor PID: 0x%04x, JPEG: %s\n", s->id.PID, camJpeg ? "hardware" : "software");
 }
 
 void setup() {
@@ -185,11 +199,26 @@ void setup() {
   server.on("/api/snapshot.jpg", HTTP_GET, [](AsyncWebServerRequest* req) {
     camera_fb_t* fb = esp_camera_fb_get();
     if (!fb) { req->send(503, "text/plain", "Camera Frame Buffer Busy"); return; }
-    AsyncWebServerResponse* res = req->beginResponse_P(200, "image/jpeg", fb->buf, fb->len);
+    // Copy the image into the response so the frame buffer can be returned immediately
+    AsyncResponseStream* res = req->beginResponseStream("image/jpeg");
+    if (camJpeg) {
+      res->write(fb->buf, fb->len);
+    } else {
+      uint8_t* jpg = NULL;
+      size_t jpgLen = 0;
+      if (!frame2jpg(fb, 80, &jpg, &jpgLen)) {
+        esp_camera_fb_return(fb);
+        delete res;
+        req->send(500, "text/plain", "JPEG Encode Failed");
+        return;
+      }
+      res->write(jpg, jpgLen);
+      free(jpg);
+    }
+    esp_camera_fb_return(fb);
     res->addHeader("Content-Disposition", "inline; filename=capture.jpg");
     res->addHeader("Cache-Control", "no-cache, no-store, must-revalidate");
     req->send(res);
-    esp_camera_fb_return(fb);
   });
 
   // POST /api/tare
