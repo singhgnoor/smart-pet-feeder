@@ -106,13 +106,10 @@ void setup() {
 
   initCamera();
 
-  WiFi.mode(WIFI_STA);
-  WiFi.begin(WIFI_SSID, WIFI_PASS);
-  while (WiFi.status() != WL_CONNECTED) {
-    delay(500);
-    Serial.print(".");
-  }
-  Serial.printf("\nESP32-CAM Online at IP: %s\n", WiFi.localIP().toString().c_str());
+  // Access Point mode: the ESP32 broadcasts its own network
+  WiFi.mode(WIFI_AP);
+  WiFi.softAP(WIFI_SSID, WIFI_PASS);
+  Serial.printf("\nESP32-CAM AP '%s' up at IP: %s\n", WIFI_SSID, WiFi.softAPIP().toString().c_str());
 
   // Global CORS Headers for seamless browser access
   DefaultHeaders::Instance().addHeader("Access-Control-Allow-Origin", "*");
