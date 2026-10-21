@@ -4,8 +4,8 @@
 #include <ArduinoJson.h>
 
 // Wi-Fi Credentials
-const char* WIFI_SSID = "YOUR_WIFI_SSID";
-const char* WIFI_PASS = "YOUR_WIFI_PASSWORD";
+const char* WIFI_SSID = "PetFeeder";
+const char* WIFI_PASS = "petfeeder123";
 const char* API_KEY   = "change-me";
 
 // Camera Model: AI-THINKER ESP32-CAM
