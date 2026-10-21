@@ -49,7 +49,7 @@ String scheduleJson = "[{\"i\":0,\"hh\":8,\"mm\":0,\"g\":50,\"en\":1},{\"i\":1,\
 
 bool authed(AsyncWebServerRequest* req) {
   if (req->hasHeader("X-API-Key")) {
-    return req->header("X-API-Key")->value() == API_KEY;
+    return req->header("X-API-Key") == API_KEY;
   }
   return false;
 }
