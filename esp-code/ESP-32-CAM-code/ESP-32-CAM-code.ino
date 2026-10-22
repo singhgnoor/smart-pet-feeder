@@ -273,20 +273,54 @@ void loop() {
     events.send(latestTelemetryJson.c_str(), "telemetry", now);
   }
 
+  // Heartbeat to U1 every 2 seconds (U1 waits for <HB:...> to show LINK)
+  static unsigned long lastHbSentMs = 0;
+  if (now - lastHbSentMs > 2000) {
+    lastHbSentMs = now;
+    sendUartCmd("HB:" + String(now / 1000));
+  }
+
   // Read incoming packets from U1
   if (Serial2.available()) {
     String line = Serial2.readStringUntil('\n');
     line.trim();
 
-    // 1. Heartbeat from U1 (<HB> or <HB:123>)
-    if (line.startsWith("<HB") && line.endsWith(">")) {
+    // Any well-formed frame from U1 proves the link is alive
+    if (line.startsWith("<") && line.endsWith(">")) {
       u1LinkActive = true;
       lastHeartbeatMs = now;
+    }
+
+    // 1. Heartbeat from U1 (<HB> or <HB:123>)
+    if (line.startsWith("<HB") && line.endsWith(">")) {
       Serial2.println("<HB:OK>");
     }
-    // 2. Telemetry frame from U1
+    // 2. Telemetry frame from U1: <TELEM:weight,hopper,state,ir,dayGrams,gateOpen>
     else if (line.startsWith("<TELEM:") && line.endsWith(">")) {
-      String json = line.substring(7, line.length() - 1);
+      String csv = line.substring(7, line.length() - 1);
+      String f[6];
+      int start = 0;
+      for (int i = 0; i < 6; i++) {
+        int comma = csv.indexOf(',', start);
+        f[i] = (comma < 0) ? csv.substring(start) : csv.substring(start, comma);
+        start = comma + 1;
+        if (comma < 0) break;
+      }
+      unsigned long secs = now / 1000;
+      char uptime[9];
+      snprintf(uptime, sizeof(uptime), "%02lu:%02lu:%02lu", (secs / 3600) % 24, (secs / 60) % 60, secs % 60);
+
+      StaticJsonDocument<256> telem;
+      telem["t"] = uptime;
+      telem["w"] = f[0].toFloat();
+      telem["hop"] = f[1].toInt();
+      telem["st"] = f[2];
+      telem["ir"] = f[3].toInt();
+      telem["vis"] = 0;
+      telem["day"] = f[4].toFloat();
+      telem["gate"] = f[5].toInt();
+      String json;
+      serializeJson(telem, json);
       latestTelemetryJson = json;
       events.send(json.c_str(), "telemetry", now);
     }
