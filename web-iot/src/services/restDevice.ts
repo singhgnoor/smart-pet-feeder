@@ -148,8 +148,8 @@ export class RestDeviceService implements DeviceService {
       throw new DeviceError('UNKNOWN', 'Malformed status response from ESP32-CAM');
     }
     const status = statusFromRaw(raw);
-    // The checked-in WROOM never emits TELEM. The CAM serves initialized defaults
-    // in that case, so these values cannot be presented as sensor readings.
+    // The CAM serves initialized defaults until the WROOM's first TELEM frame
+    // arrives, so these values cannot be presented as sensor readings.
     status.telemetry = null;
     this.updateConnectionState(true);
     return status;
