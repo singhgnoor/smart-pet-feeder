@@ -132,14 +132,8 @@ void setup() {
   // Init HX711
   scale.begin(PIN_HX_DT, PIN_HX_SCK);
   // NOTE: You need to calibrate this value for your specific load cell!
-  scale.set_scale(2280.f);
-  // tare() blocks forever if the HX711 never becomes ready, which would stop
-  // the UART link to the CAM from ever coming up. Bound the wait instead.
-  if (scale.wait_ready_timeout(1000)) {
-    scale.tare(); // assume bowl is empty on boot
-  } else {
-    Serial.println("HX711 not responding - skipping tare");
-  }
+  scale.set_scale(2280.f); 
+  scale.tare(); // assume bowl is empty on boot
 
   // Init Ultrasonic
   pinMode(PIN_US_TRIG, OUTPUT);

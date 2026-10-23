@@ -439,23 +439,6 @@ export function DeviceProvider({ children }: { children: ReactNode }) {
     return () => unsub();
   }, [service, refreshAll]);
 
-  // The CAM↔WROOM UART link can change while the browser stays connected (e.g. WROOM
-  // boots after the CAM), and SSE telemetry is not forwarded, so re-poll /api/status.
-  useEffect(() => {
-    if (service.mode !== 'hardware') return;
-    const id = window.setInterval(async () => {
-      try {
-        const st = await service.getStatus();
-        if (serviceRef.current !== service) return;
-        setLink(st.link);
-        setRssi(st.rssi);
-      } catch {
-        /* connection loss is reported via the 'connection' event */
-      }
-    }, 3000);
-    return () => clearInterval(id);
-  }, [service]);
-
   /* ---------------- command helper ---------------- */
 
   const run = useCallback(
