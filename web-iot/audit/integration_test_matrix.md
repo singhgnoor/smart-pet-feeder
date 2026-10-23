@@ -47,7 +47,7 @@ Shared status definitions: `PASS`, `FAIL`, `BLOCKED`, `NOT VERIFIED`, `MISSING`,
 
 ## UART protocol matrix
 
-Transport parameters from source: 115200 baud, 8N1. CAM uses Serial2 RX GPIO14 / TX GPIO15; WROOM uses RX GPIO16 / TX GPIO17. Wiring needs TX↔RX crossover and common ground. The source protocol is `<ASCII payload>\n`; no checksum, max length, sequence ID, or ACK/NAK protocol exists. A checksum would detect accidental corruption only; it would not authenticate a sender.
+Transport parameters from source: 115200 baud, 8N1. CAM uses Serial2 RX GPIO13 / TX GPIO14; WROOM uses RX GPIO16 / TX GPIO17. Wiring needs TX↔RX crossover and common ground. The source protocol is `<ASCII payload>\n`; no checksum, max length, sequence ID, or ACK/NAK protocol exists. A checksum would detect accidental corruption only; it would not authenticate a sender.
 
 | Test ID / message | Producer → frame → consumer/handler → outcome | Negative/failure injection | Actual result / status |
 |---|---|---|---|

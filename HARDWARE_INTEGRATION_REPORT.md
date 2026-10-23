@@ -151,7 +151,7 @@ The system relies on a two-microcontroller distributed architecture:
 - **Data Bits / Parity / Stop Bits:** `8N1` (8 data bits, no parity, 1 stop bit)
 - **Pin Assignment:**
   - ESP32-WROOM (U1): `GPIO16` (RX2) and `GPIO17` (TX2) via hardware `Serial2`.
-  - ESP32-CAM (U2): `GPIO14` (RX) and `GPIO15` (TX) via `Serial2`.
+  - ESP32-CAM (U2): `GPIO13` (RX) and `GPIO14` (TX) via `Serial2` (matches `TL_CIRCUIT_V2.1`).
 
 ### 5.2 Heartbeat Protocol & Link Timeout
 - U1 broadcasts `<HB>` over UART every **2,000 ms**.
@@ -235,9 +235,11 @@ const char* API_KEY   = "change-me";
 #define HREF_GPIO_NUM     23
 #define PCLK_GPIO_NUM     22
 
-// UART to ESP32-WROOM (U1)
-#define U1_RX_PIN 14
-#define U1_TX_PIN 15
+// UART to ESP32-WROOM (U1), per TL_CIRCUIT_V2.1:
+//   WROOM IO17 (TX2) -> CAM IO13 (RX), CAM IO14 (TX) -> WROOM IO16 (RX2), common GND.
+// IO13/IO14 are the SD-card pins, so the SD slot must stay unused.
+#define U1_RX_PIN 13
+#define U1_TX_PIN 14
 
 AsyncWebServer server(80);
 AsyncEventSource events("/events");

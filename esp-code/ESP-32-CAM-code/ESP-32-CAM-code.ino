@@ -35,9 +35,11 @@ const char* API_KEY   = "change-me";
 #define pin_sscb_scl pin_sccb_scl
 #endif
 
-// UART to ESP32-WROOM (U1)
-#define U1_RX_PIN 14
-#define U1_TX_PIN 15
+// UART to ESP32-WROOM (U1), per TL_CIRCUIT_V2.1:
+//   WROOM IO17 (TX2) -> CAM IO13 (RX), CAM IO14 (TX) -> WROOM IO16 (RX2), common GND.
+// IO13/IO14 are the SD-card pins, so the SD slot must stay unused.
+#define U1_RX_PIN 13
+#define U1_TX_PIN 14
 
 AsyncWebServer server(80);
 AsyncEventSource events("/events");
