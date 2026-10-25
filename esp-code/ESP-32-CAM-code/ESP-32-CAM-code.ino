@@ -275,15 +275,26 @@ void loop() {
     events.send(latestTelemetryJson.c_str(), "telemetry", now);
   }
 
+  // Heartbeat to U1 every 2 seconds (U1 waits for <HB:...> to show LINK)
+  static unsigned long lastHbSentMs = 0;
+  if (now - lastHbSentMs > 2000) {
+    lastHbSentMs = now;
+    sendUartCmd("HB:" + String(now / 1000));
+  }
+
   // Read incoming packets from U1
   if (Serial2.available()) {
     String line = Serial2.readStringUntil('\n');
     line.trim();
 
-    // 1. Heartbeat from U1 (<HB> or <HB:123>)
-    if (line.startsWith("<HB") && line.endsWith(">")) {
+    // U1 never sends <HB>; any well-formed frame (TELEM every 1 s) proves the link is alive
+    if (line.startsWith("<") && line.endsWith(">")) {
       u1LinkActive = true;
       lastHeartbeatMs = now;
+    }
+
+    // 1. Heartbeat from U1 (<HB> or <HB:123>)
+    if (line.startsWith("<HB") && line.endsWith(">")) {
       Serial2.println("<HB:OK>");
     }
     // 2. Telemetry frame from U1
