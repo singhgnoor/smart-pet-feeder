@@ -3,7 +3,7 @@ import {
   Sliders,
   Scale,
   Wifi,
-  Eye,
+  Clock,
   AlertTriangle,
   RotateCcw,
   Check,
@@ -13,7 +13,7 @@ import { useDevice } from '../context/DeviceContext';
 import { useConfirm } from '../components/ConfirmDialog';
 import { FAULT_INFO } from '../utils/labels';
 
-type SettingsTab = 'general' | 'device' | 'camera' | 'network';
+type SettingsTab = 'general' | 'device' | 'network';
 
 export const SettingsView: React.FC = () => {
   const { config, actions, pending, demo, telemetry, connection, link, rssi, mode, setMode } = useDevice();
@@ -21,29 +21,29 @@ export const SettingsView: React.FC = () => {
 
   const [activeTab, setActiveTab] = useState<SettingsTab>('general');
 
-  // Form states for general settings
+  const [cooldownMin, setCooldownMin] = useState<number>(10);
+  const [leftoverThreshold, setLeftoverThreshold] = useState<number>(200);
   const [dailyLimit, setDailyLimit] = useState<number>(300);
-  const [leftoverThreshold, setLeftoverThreshold] = useState<number>(30);
   const [overshootMargin, setOvershootMargin] = useState<number>(3);
   const [requirePet, setRequirePet] = useState<boolean>(false);
-
-  // Calibration known mass state
   const [knownMass, setKnownMass] = useState<number>(200);
 
   useEffect(() => {
     if (config) {
-      setDailyLimit(config.dailyLimitG);
-      setLeftoverThreshold(config.leftoverThresholdG);
-      setOvershootMargin(config.overshootMarginG);
-      setRequirePet(config.requirePetDetection);
+      setCooldownMin(config.cooldownMin ?? 10);
+      setLeftoverThreshold(config.leftoverThresholdG ?? 200);
+      setDailyLimit(config.dailyLimitG ?? 300);
+      setOvershootMargin(config.overshootMarginG ?? 3);
+      setRequirePet(config.requirePetDetection ?? false);
     }
   }, [config]);
 
   const handleSaveGeneral = async (e: React.FormEvent) => {
     e.preventDefault();
     await actions.saveConfig({
-      dailyLimitG: dailyLimit,
+      cooldownMin,
       leftoverThresholdG: leftoverThreshold,
+      dailyLimitG: dailyLimit,
       overshootMarginG: overshootMargin,
       requirePetDetection: requirePet,
     });
@@ -63,7 +63,7 @@ export const SettingsView: React.FC = () => {
   const handleCalibrate = async () => {
     const ok = await confirm({
       title: `Calibrate with ${knownMass} g?`,
-      body: `Place a verified reference calibration weight of exactly ${knownMass} g onto the center of the bowl before confirming.`,
+      body: `Place a known weight of exactly ${knownMass} g onto the bowl before confirming.`,
       confirmLabel: 'Calibrate',
       cancelLabel: 'Cancel',
       emoji: '🎯',
@@ -71,14 +71,10 @@ export const SettingsView: React.FC = () => {
     if (ok) await actions.calibrate(knownMass);
   };
 
-  const handleClearFault = async () => {
-    await actions.clearFault();
-  };
-
   const handleResetDemo = async () => {
     const ok = await confirm({
       title: 'Reset Demo Data to Default? 🔄',
-      body: 'This will restore the original demo telemetry, feeding schedules, 7-day history, and settings.',
+      body: 'This will restore the original demo telemetry, schedules, and settings.',
       confirmLabel: 'Reset Data',
       cancelLabel: 'Cancel',
       tone: 'danger',
@@ -89,18 +85,16 @@ export const SettingsView: React.FC = () => {
 
   return (
     <div className="settings-page">
-      {/* Header */}
       <div className="page-header">
         <div>
           <h1 className="page-header__greeting">
             <span>Settings</span>
             <span style={{ fontSize: '24px' }}>⚙️</span>
           </h1>
-          <p className="page-header__sub">Configure feeder limits, sensors, and simulation parameters.</p>
+          <p className="page-header__sub">Configure cooldown barrier T, 200 g bowl guard, HX711 scale, and RTC.</p>
         </div>
       </div>
 
-      {/* Settings Navigation Tabs */}
       <div
         style={{
           display: 'flex',
@@ -115,77 +109,91 @@ export const SettingsView: React.FC = () => {
           marginBottom: '24px',
         }}
       >
-        <button
-          className={`chip ${activeTab === 'general' ? 'chip--active' : ''}`}
-          onClick={() => setActiveTab('general')}
-          style={{ border: 'none' }}
-        >
-          General
+        <button className={`chip ${activeTab === 'general' ? 'chip--active' : ''}`} onClick={() => setActiveTab('general')} style={{ border: 'none' }}>
+          Dispensing Rules
         </button>
-        <button
-          className={`chip ${activeTab === 'device' ? 'chip--active' : ''}`}
-          onClick={() => setActiveTab('device')}
-          style={{ border: 'none' }}
-        >
-          Device Controls
+        <button className={`chip ${activeTab === 'device' ? 'chip--active' : ''}`} onClick={() => setActiveTab('device')} style={{ border: 'none' }}>
+          Scale & RTC
         </button>
-        <button
-          className={`chip ${activeTab === 'camera' ? 'chip--active' : ''}`}
-          onClick={() => setActiveTab('camera')}
-          style={{ border: 'none' }}
-        >
-          Camera & AI
-        </button>
-        <button
-          className={`chip ${activeTab === 'network' ? 'chip--active' : ''}`}
-          onClick={() => setActiveTab('network')}
-          style={{ border: 'none' }}
-        >
-          Network & Hardware
+        <button className={`chip ${activeTab === 'network' ? 'chip--active' : ''}`} onClick={() => setActiveTab('network')} style={{ border: 'none' }}>
+          Network & UART Link
         </button>
       </div>
 
-      {/* Tab: General Settings */}
       {activeTab === 'general' && (
         <div className="card">
           <div className="card__header">
             <div>
-              <h3 className="card__title">Feeding Parameters</h3>
-              <p className="card__subtitle">Hardware closed-loop dispensing tunables</p>
+              <h3 className="card__title">Dispensing & Cooldown Parameters</h3>
+              <p className="card__subtitle">Saved directly to ESP32-S NVS memory over UART</p>
             </div>
             <Sliders size={20} color="#567e60" />
           </div>
 
           <form onSubmit={handleSaveGeneral}>
-            {mode === 'hardware' && (
-              <p role="status" style={{ color: '#ad6800', marginBottom: '16px' }}>
-                Device configuration cannot be read or applied by the current WROOM firmware. Displayed values are editable UI defaults and are not device settings.
-              </p>
-            )}
             <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
-              {/* Daily Feeding Limit */}
-              <div
-                style={{
-                  display: 'flex',
-                  justifyContent: 'space-between',
-                  alignItems: 'center',
-                  paddingBottom: '16px',
-                  borderBottom: '1px solid var(--border-light)',
-                }}
-              >
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', paddingBottom: '16px', borderBottom: '1px solid var(--border-light)' }}>
                 <div>
                   <label style={{ display: 'block', fontWeight: 700, fontSize: '14px', marginBottom: '2px' }}>
-                    Daily Feeding Limit
+                    Cooldown Timing Barrier (T)
                   </label>
                   <p style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
-                    Maximum total food allowed to dispense per day. Skips feeding if exceeded.
+                    Minimum wait time between dispenses based on RTC logs (default 10 minutes).
                   </p>
                 </div>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                   <input
                     type="number"
-                    min="10"
-                    max="1000"
+                    min="0"
+                    max="1440"
+                    step="1"
+                    className="input"
+                    value={cooldownMin}
+                    onChange={(e) => setCooldownMin(Number(e.target.value))}
+                    style={{ width: '90px' }}
+                  />
+                  <span style={{ fontSize: '13px', fontWeight: 600 }}>min</span>
+                </div>
+              </div>
+
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', paddingBottom: '16px', borderBottom: '1px solid var(--border-light)' }}>
+                <div>
+                  <label style={{ display: 'block', fontWeight: 700, fontSize: '14px', marginBottom: '2px' }}>
+                    Max Bowl Weight Guard
+                  </label>
+                  <p style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
+                    No food is dispensed if the bowl already exceeds this weight (default 200 g).
+                  </p>
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <input
+                    type="number"
+                    min="20"
+                    max="500"
+                    step="10"
+                    className="input"
+                    value={leftoverThreshold}
+                    onChange={(e) => setLeftoverThreshold(Number(e.target.value))}
+                    style={{ width: '90px' }}
+                  />
+                  <span style={{ fontSize: '13px', fontWeight: 600 }}>g</span>
+                </div>
+              </div>
+
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', paddingBottom: '16px', borderBottom: '1px solid var(--border-light)' }}>
+                <div>
+                  <label style={{ display: 'block', fontWeight: 700, fontSize: '14px', marginBottom: '2px' }}>
+                    Daily Feeding Limit
+                  </label>
+                  <p style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
+                    Maximum total food allowed to dispense per day.
+                  </p>
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <input
+                    type="number"
+                    min="20"
+                    max="2000"
                     step="10"
                     className="input"
                     value={dailyLimit}
@@ -196,62 +204,20 @@ export const SettingsView: React.FC = () => {
                 </div>
               </div>
 
-              {/* Leftover Food Threshold */}
-              <div
-                style={{
-                  display: 'flex',
-                  justifyContent: 'space-between',
-                  alignItems: 'center',
-                  paddingBottom: '16px',
-                  borderBottom: '1px solid var(--border-light)',
-                }}
-              >
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', paddingBottom: '16px', borderBottom: '1px solid var(--border-light)' }}>
                 <div>
                   <label style={{ display: 'block', fontWeight: 700, fontSize: '14px', marginBottom: '2px' }}>
-                    Leftover Food Threshold
+                    Overshoot Margin
                   </label>
                   <p style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
-                    Skip feeding if bowl already has more than this (prevents stale kibble overflow).
-                  </p>
-                </div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                  <input
-                    type="number"
-                    min="5"
-                    max="150"
-                    step="5"
-                    className="input"
-                    value={leftoverThreshold}
-                    onChange={(e) => setLeftoverThreshold(Number(e.target.value))}
-                    style={{ width: '90px' }}
-                  />
-                  <span style={{ fontSize: '13px', fontWeight: 600 }}>g</span>
-                </div>
-              </div>
-
-              {/* Overshoot Margin */}
-              <div
-                style={{
-                  display: 'flex',
-                  justifyContent: 'space-between',
-                  alignItems: 'center',
-                  paddingBottom: '16px',
-                  borderBottom: '1px solid var(--border-light)',
-                }}
-              >
-                <div>
-                  <label style={{ display: 'block', fontWeight: 700, fontSize: '14px', marginBottom: '2px' }}>
-                    Overshoot Margin (ovs)
-                  </label>
-                  <p style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
-                    Closes the servo gate early by this amount to account for falling kibble.
+                    Closes the servo gate early by this margin to account for falling kibble.
                   </p>
                 </div>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                   <input
                     type="number"
                     min="0"
-                    max="15"
+                    max="20"
                     step="0.5"
                     className="input"
                     value={overshootMargin}
@@ -262,39 +228,23 @@ export const SettingsView: React.FC = () => {
                 </div>
               </div>
 
-              {/* Require Pet Detection */}
-              <div
-                style={{
-                  display: 'flex',
-                  justifyContent: 'space-between',
-                  alignItems: 'center',
-                  paddingBottom: '16px',
-                }}
-              >
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                 <div>
                   <label style={{ display: 'block', fontWeight: 700, fontSize: '14px', marginBottom: '2px' }}>
-                    Require Pet Detection Before Feeding
+                    Require Pet Detection for Scheduled Meals
                   </label>
                   <p style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
-                    When enabled, scheduled feedings enter WAIT_PET and dispense only when pet is present.
+                    When enabled, scheduled meals wait for IR/pet presence before dispensing.
                   </p>
                 </div>
                 <label className="switch">
-                  <input
-                    type="checkbox"
-                    checked={requirePet}
-                    onChange={(e) => setRequirePet(e.target.checked)}
-                  />
+                  <input type="checkbox" checked={requirePet} onChange={(e) => setRequirePet(e.target.checked)} />
                   <span className="switch__slider" />
                 </label>
               </div>
 
               <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '10px' }}>
-                <button
-                  type="submit"
-                  className="btn btn--primary"
-                  disabled={pending.config || mode === 'hardware'}
-                >
+                <button type="submit" className="btn btn--primary" disabled={pending.config}>
                   <Check size={16} />
                   <span>Save Settings</span>
                 </button>
@@ -304,96 +254,58 @@ export const SettingsView: React.FC = () => {
         </div>
       )}
 
-      {/* Tab: Device Controls & Calibration */}
       {activeTab === 'device' && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
-          {/* Active Fault Alert if present */}
           {telemetry?.fault && (
-            <div
-              className="card"
-              style={{
-                background: 'var(--status-err-bg)',
-                borderColor: 'var(--status-err-border)',
-                marginBottom: 0,
-              }}
-            >
+            <div className="card" style={{ background: 'var(--status-err-bg)', borderColor: 'var(--status-err-border)', marginBottom: 0 }}>
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
                   <AlertTriangle size={24} color="#cf1322" />
                   <div>
-                    <h4 style={{ color: '#cf1322', fontWeight: 800 }}>
-                      Active Fault: {telemetry.fault}
-                    </h4>
-                    <p style={{ fontSize: '13px', color: 'var(--text-muted)' }}>
-                      {FAULT_INFO[telemetry.fault].description}
-                    </p>
+                    <h4 style={{ color: '#cf1322', fontWeight: 800 }}>Active Fault: {telemetry.fault}</h4>
+                    <p style={{ fontSize: '13px', color: 'var(--text-muted)' }}>{FAULT_INFO[telemetry.fault].description}</p>
                   </div>
                 </div>
-                <button className="btn btn--danger" onClick={handleClearFault} disabled={pending.clear || mode === 'hardware'}>
+                <button className="btn btn--danger" onClick={() => actions.clearFault()} disabled={pending.clear}>
                   Clear Fault
                 </button>
               </div>
             </div>
           )}
 
-          {/* Scale Calibration Card */}
           <div className="card" style={{ marginBottom: 0 }}>
             <div className="card__header">
               <div>
-                <h3 className="card__title">Load Cell Scale Calibration</h3>
-                <p className="card__subtitle">HX711 24-bit ADC Tare and Calibration</p>
+                <h3 className="card__title">HX711 Load Cell Calibration</h3>
+                <p className="card__subtitle">Zero empty bowl and calibrate grams factor</p>
               </div>
               <Scale size={20} color="#567e60" />
             </div>
 
             <div className="grid-2-col">
-              {/* Tare */}
-              <div
-                style={{
-                  background: 'var(--bg-app)',
-                  padding: '20px',
-                  borderRadius: 'var(--radius-md)',
-                  display: 'flex',
-                  flexDirection: 'column',
-                  justifyContent: 'space-between',
-                }}
-              >
+              <div style={{ background: 'var(--bg-app)', padding: '20px', borderRadius: 'var(--radius-md)', display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
                 <div>
                   <h4 style={{ fontWeight: 700, marginBottom: '6px' }}>Tare Scale</h4>
                   <p style={{ fontSize: '12px', color: 'var(--text-muted)', marginBottom: '16px' }}>
                     Zeroes out the empty bowl weight offset in the HX711 register.
                   </p>
                 </div>
-                <button
-                  className="btn btn--secondary"
-                  onClick={handleTare}
-                  disabled={pending.tare || mode === 'hardware'}
-                >
+                <button className="btn btn--secondary" onClick={handleTare} disabled={pending.tare}>
                   Zero / Tare Scale (0 g)
                 </button>
               </div>
 
-              {/* Known Mass Calibration */}
-              <div
-                style={{
-                  background: 'var(--bg-app)',
-                  padding: '20px',
-                  borderRadius: 'var(--radius-md)',
-                  display: 'flex',
-                  flexDirection: 'column',
-                  justifyContent: 'space-between',
-                }}
-              >
+              <div style={{ background: 'var(--bg-app)', padding: '20px', borderRadius: 'var(--radius-md)', display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
                 <div>
                   <h4 style={{ fontWeight: 700, marginBottom: '6px' }}>Calibrate Known Mass</h4>
                   <p style={{ fontSize: '12px', color: 'var(--text-muted)', marginBottom: '12px' }}>
-                    Calculates counts-per-gram calibration factor using a known weight.
+                    Place a known mass on the bowl and click Calibrate (saved to NVS).
                   </p>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '16px' }}>
                     <span style={{ fontSize: '13px', fontWeight: 600 }}>Known mass:</span>
                     <input
                       type="number"
-                      min="50"
+                      min="10"
                       max="1000"
                       className="input"
                       value={knownMass}
@@ -403,151 +315,48 @@ export const SettingsView: React.FC = () => {
                     <span style={{ fontSize: '13px', fontWeight: 600 }}>g</span>
                   </div>
                 </div>
-
-                <button
-                  className="btn btn--primary"
-                  onClick={handleCalibrate}
-                  disabled={pending.calibrate || mode === 'hardware'}
-                >
+                <button className="btn btn--primary" onClick={handleCalibrate} disabled={pending.calibrate}>
                   Calibrate Scale Factor
                 </button>
               </div>
             </div>
           </div>
 
-          {/* Fault Simulation & Factory Reset Card */}
-          <div className="card">
+          <div className="card" style={{ marginBottom: 0 }}>
             <div className="card__header">
               <div>
-                <h3 className="card__title">Diagnostics & Reset</h3>
-                <p className="card__subtitle">Test fault handling or restore initial demo data</p>
+                <h3 className="card__title">DS3231 Real-Time Clock</h3>
+                <p className="card__subtitle">Current device time: {telemetry?.deviceTime ?? '--:--:--'}</p>
               </div>
-              <RotateCcw size={20} color="#e6982b" />
+              <Clock size={20} color="#567e60" />
             </div>
-
             <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
-              <button
-                className="btn btn--secondary"
-                onClick={() => demo?.injectFault('JAM')}
-              >
-                Simulate Kibble Jam (JAM)
+              <button className="btn btn--primary" onClick={() => actions.syncTime()} disabled={pending.time || mode === 'mock'}>
+                Sync DS3231 RTC from Browser
               </button>
-              <button
-                className="btn btn--secondary"
-                onClick={() => demo?.injectFault('SENSOR')}
-              >
-                Simulate Sensor Error (SENSOR)
-              </button>
-              <button
-                className="btn btn--danger"
-                onClick={handleResetDemo}
-                disabled={pending.reset}
-                style={{ marginLeft: 'auto' }}
-              >
-                <RotateCcw size={14} />
-                <span>Reset Demo Data</span>
-              </button>
+              {demo && (
+                <button className="btn btn--danger" onClick={handleResetDemo} disabled={pending.reset} style={{ marginLeft: 'auto' }}>
+                  <RotateCcw size={14} />
+                  <span>Reset Demo Data</span>
+                </button>
+              )}
             </div>
           </div>
         </div>
       )}
 
-      {/* Tab: Camera & AI */}
-      {activeTab === 'camera' && (
-        <div className="card">
-          <div className="card__header">
-            <div>
-              <h3 className="card__title">Edge AI Vision Parameters</h3>
-              <p className="card__subtitle">ESP32-CAM TinyML model controls</p>
-            </div>
-            <Eye size={20} color="#567e60" />
-          </div>
-
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
-            <div
-              style={{
-                display: 'flex',
-                justifyContent: 'space-between',
-                alignItems: 'center',
-                paddingBottom: '16px',
-                borderBottom: '1px solid var(--border-light)',
-              }}
-            >
-              <div>
-                <strong style={{ fontSize: '14px', display: 'block', marginBottom: '2px' }}>
-                  Model Architecture
-                </strong>
-                <p style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
-                  MobileNetV1 0.25 96x96 INT8 quantized (Edge Impulse Arduino library).
-                </p>
-              </div>
-              <span className="badge badge--ok">Active</span>
-            </div>
-
-            <div
-              style={{
-                display: 'flex',
-                justifyContent: 'space-between',
-                alignItems: 'center',
-                paddingBottom: '16px',
-                borderBottom: '1px solid var(--border-light)',
-              }}
-            >
-              <div>
-                <strong style={{ fontSize: '14px', display: 'block', marginBottom: '2px' }}>
-                  Temporal Voting Policy
-                </strong>
-                <p style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
-                  Captures 3 frames 250 ms apart. Requires ≥2 frames with ≥75% confidence to confirm pet.
-                </p>
-              </div>
-              <span className="badge badge--ok">2 of 3 votes (75%)</span>
-            </div>
-
-            <div>
-              <strong style={{ fontSize: '14px', display: 'block', marginBottom: '8px' }}>
-                Test Simulated Detections
-              </strong>
-              <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
-                <button
-                  className="btn btn--secondary btn--sm"
-                  onClick={() => demo?.triggerVisit('pet')}
-                >
-                  Trigger Pet (Dog 🐶)
-                </button>
-                <button
-                  className="btn btn--secondary btn--sm"
-                  onClick={() => demo?.triggerVisit('person')}
-                >
-                  Trigger Person (Owner 👤)
-                </button>
-                <button
-                  className="btn btn--secondary btn--sm"
-                  onClick={() => demo?.triggerVisit('other')}
-                >
-                  Trigger Shadow / Moving Object
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Tab: Network & Hardware */}
       {activeTab === 'network' && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
-          {/* 1. Mode Selector Card */}
           <div className="card" style={{ marginBottom: 0 }}>
             <div className="card__header">
               <div>
                 <h3 className="card__title">Connection Mode</h3>
-                <p className="card__subtitle">Choose between live hardware communication and demo simulator</p>
+                <p className="card__subtitle">Switch between physical ESP32-CAM AP and Demo Simulator</p>
               </div>
               <Wifi size={20} color="#567e60" />
             </div>
 
             <div className="grid-2-col" style={{ gap: '16px' }}>
-              {/* Option 1: Hardware Mode */}
               <div
                 style={{
                   border: mode === 'hardware' ? '2px solid var(--primary-green)' : '1px solid var(--border-light)',
@@ -555,28 +364,18 @@ export const SettingsView: React.FC = () => {
                   borderRadius: 'var(--radius-md)',
                   padding: '16px',
                   cursor: 'pointer',
-                  transition: 'all 0.2s ease',
                 }}
                 onClick={() => setMode('hardware')}
               >
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '8px' }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                    <span style={{ fontSize: '18px' }}>⚡</span>
-                    <strong style={{ fontSize: '15px', color: 'var(--text-main)' }}>Hardware Mode</strong>
-                  </div>
-                  <input
-                    type="radio"
-                    name="deviceMode"
-                    checked={mode === 'hardware'}
-                    onChange={() => setMode('hardware')}
-                  />
+                  <strong style={{ fontSize: '15px' }}>⚡ Hardware Mode</strong>
+                  <input type="radio" name="deviceMode" checked={mode === 'hardware'} onChange={() => setMode('hardware')} />
                 </div>
-                <p style={{ fontSize: '12px', color: 'var(--text-muted)', lineHeight: 1.4 }}>
-                  Connects to physical ESP32-CAM via REST API and Server-Sent Events (SSE) stream. Forwards requests through Vite dev proxy.
+                <p style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
+                  Connects to ESP32-CAM AP (PetFeeder @ 192.168.4.1) via REST + SSE.
                 </p>
               </div>
 
-              {/* Option 2: Mock Demo Mode */}
               <div
                 style={{
                   border: mode === 'mock' ? '2px solid var(--accent-amber)' : '1px solid var(--border-light)',
@@ -584,199 +383,82 @@ export const SettingsView: React.FC = () => {
                   borderRadius: 'var(--radius-md)',
                   padding: '16px',
                   cursor: 'pointer',
-                  transition: 'all 0.2s ease',
                 }}
                 onClick={() => setMode('mock')}
               >
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '8px' }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                    <span style={{ fontSize: '18px' }}>🐾</span>
-                    <strong style={{ fontSize: '15px', color: 'var(--text-main)' }}>Demo Simulation</strong>
-                  </div>
-                  <input
-                    type="radio"
-                    name="deviceMode"
-                    checked={mode === 'mock'}
-                    onChange={() => setMode('mock')}
-                  />
+                  <strong style={{ fontSize: '15px' }}>🐾 Demo Simulation</strong>
+                  <input type="radio" name="deviceMode" checked={mode === 'mock'} onChange={() => setMode('mock')} />
                 </div>
-                <p style={{ fontSize: '12px', color: 'var(--text-muted)', lineHeight: 1.4 }}>
-                  Runs a full in-browser IoT simulation of both U1 (WROOM sensor hub) and U2 (CAM web server) with synthetic sensor events.
+                <p style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
+                  In-browser simulation for testing without hardware attached.
                 </p>
               </div>
             </div>
           </div>
 
-          {/* 2. Network Diagnostics Card */}
           <div className="card" style={{ marginBottom: 0 }}>
             <div className="card__header">
               <div>
-                <h3 className="card__title">Link Status & Telemetry Diagnostics</h3>
-                <p className="card__subtitle">Independent status of browser HTTP/SSE link and microcontrollers UART bus</p>
+                <h3 className="card__title">Link Status & Diagnostics</h3>
+                <p className="card__subtitle">Browser ↔ ESP32-CAM HTTP/SSE and ESP32-CAM ↔ ESP32-S UART (9600 8N1)</p>
               </div>
             </div>
 
             <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
-              {/* Web App to ESP32-CAM HTTP/SSE Link */}
-              <div
-                style={{
-                  display: 'flex',
-                  justifyContent: 'space-between',
-                  alignItems: 'center',
-                  paddingBottom: '14px',
-                  borderBottom: '1px solid var(--border-light)',
-                }}
-              >
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', paddingBottom: '14px', borderBottom: '1px solid var(--border-light)' }}>
                 <div>
-                  <strong style={{ fontSize: '14px', display: 'block', marginBottom: '2px' }}>
-                    Web App ↔ ESP32-CAM (HTTP / SSE)
-                  </strong>
-                  <p style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
-                    Browser EventSource stream (`/events`) and REST endpoints (`/api/*`).
-                  </p>
+                  <strong style={{ fontSize: '14px', display: 'block' }}>Web App ↔ ESP32-CAM (HTTP / SSE)</strong>
+                  <p style={{ fontSize: '12px', color: 'var(--text-muted)' }}>AP: PetFeeder (http://192.168.4.1)</p>
                 </div>
                 <span className={`badge ${connection === 'connected' ? 'badge--ok' : 'badge--danger'}`}>
-                  {connection === 'connected' ? 'Connected (Online)' : connection === 'connecting' ? 'Connecting...' : 'Disconnected (Offline)'}
+                  {connection === 'connected' ? 'Connected' : connection === 'connecting' ? 'Connecting...' : 'Offline'}
                 </span>
               </div>
 
-              {/* ESP32-CAM to ESP32-WROOM UART Bus Link */}
-              <div
-                style={{
-                  display: 'flex',
-                  justifyContent: 'space-between',
-                  alignItems: 'center',
-                  paddingBottom: '14px',
-                  borderBottom: '1px solid var(--border-light)',
-                }}
-              >
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', paddingBottom: '14px', borderBottom: '1px solid var(--border-light)' }}>
                 <div>
-                  <strong style={{ fontSize: '14px', display: 'block', marginBottom: '2px' }}>
-                    ESP32-CAM ↔ ESP32-WROOM (UART Bus Link)
-                  </strong>
-                  <p style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
-                    115200 8N1 serial bus with 2s heartbeat &lt;HB&gt;. Times out after 6s.
-                  </p>
+                  <strong style={{ fontSize: '14px', display: 'block' }}>ESP32-CAM ↔ ESP32-S (UART Link)</strong>
+                  <p style={{ fontSize: '12px', color: 'var(--text-muted)' }}>9600 8N1 · ESP32-S IO17→CAM IO13, CAM IO14→ESP32-S IO16</p>
                 </div>
                 <span className={`badge ${link ? 'badge--ok' : 'badge--danger'}`}>
-                  {link ? 'Link Active (HB ok)' : 'Link Down (503)'}
+                  {link ? 'LINK ACTIVE' : 'LINK OFF'}
                 </span>
               </div>
 
-              {/* Wi-Fi RSSI */}
-              <div
-                style={{
-                  display: 'flex',
-                  justifyContent: 'space-between',
-                  alignItems: 'center',
-                  paddingBottom: '14px',
-                  borderBottom: '1px solid var(--border-light)',
-                }}
-              >
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                 <div>
-                  <strong style={{ fontSize: '14px', display: 'block', marginBottom: '2px' }}>
-                    Wi-Fi Signal (RSSI)
-                  </strong>
-                  <p style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
-                    Reported by ESP32 Wi-Fi station.
-                  </p>
-                </div>
-                <span style={{ fontSize: '14px', fontWeight: 700, color: 'var(--text-main)' }}>
-                  {rssi ? `${rssi} dBm` : 'N/A'}
-                </span>
-              </div>
-
-              {/* Target Address Info */}
-              <div
-                style={{
-                  display: 'flex',
-                  justifyContent: 'space-between',
-                  alignItems: 'center',
-                  paddingBottom: '14px',
-                }}
-              >
-                <div>
-                  <strong style={{ fontSize: '14px', display: 'block', marginBottom: '2px' }}>
-                    Target Hardware Address
-                  </strong>
-                  <p style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
-                    Configured in `.env` (proxied by Vite during development).
-                  </p>
+                  <strong style={{ fontSize: '14px', display: 'block' }}>Target Hardware Address</strong>
+                  <p style={{ fontSize: '12px', color: 'var(--text-muted)' }}>Configured in .env / vite.config.ts</p>
                 </div>
                 <span style={{ fontFamily: 'monospace', fontSize: '13px', background: 'var(--bg-app)', padding: '4px 10px', borderRadius: '4px' }}>
-                  http://{import.meta.env.VITE_ESP32_HOST || '192.168.1.100'}:{import.meta.env.VITE_ESP32_PORT || '80'}
+                  http://{import.meta.env.VITE_ESP32_HOST || '192.168.4.1'}:{import.meta.env.VITE_ESP32_PORT || '80'}
                 </span>
               </div>
             </div>
           </div>
 
-          {/* 3. Actions / Controls depending on Mode */}
           <div className="card">
-            <div className="card__header">
-              <div>
-                <h3 className="card__title">
-                  {mode === 'hardware' ? 'Hardware Diagnostics & Reconnect' : 'Simulation Test Controls'}
-                </h3>
-                <p className="card__subtitle">
-                  {mode === 'hardware' ? 'Interact directly with physical hardware link' : 'Simulate edge cases in software'}
-                </p>
-              </div>
-            </div>
-
-            {mode === 'hardware' ? (
-              <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
-                <button
-                  className="btn btn--primary"
-                  onClick={() => actions.reconnect()}
-                  disabled={pending.reconnect}
-                >
-                  <Wifi size={14} />
-                  <span>Reconnect to ESP32</span>
-                </button>
-                <button
-                  className="btn btn--secondary"
-                  onClick={() => actions.refreshSnapshot()}
-                  disabled={pending.snapshot}
-                >
-                  <span>Test Camera Snapshot</span>
-                </button>
-                {connection !== 'connected' && (
-                  <p style={{ fontSize: '13px', color: '#cf1322', width: '100%', marginTop: '8px' }}>
-                    ⚠️ Hardware device unreachable at {import.meta.env.VITE_ESP32_HOST || '192.168.1.100'}. Switch to "Demo Simulation" mode above if physical hardware is not powered on.
-                  </p>
-                )}
-              </div>
-            ) : (
-              <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
-                <button
-                  className="btn btn--secondary"
-                  onClick={() => demo?.simulateDisconnect()}
-                >
+            <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
+              <button className="btn btn--primary" onClick={() => actions.reconnect()} disabled={pending.reconnect}>
+                <Wifi size={14} />
+                <span>Reconnect</span>
+              </button>
+              <button className="btn btn--secondary" onClick={() => actions.refreshSnapshot(true)} disabled={pending.snapshot}>
+                <span>Test Camera Snapshot</span>
+              </button>
+              {mode === 'mock' && (
+                <button className="btn btn--secondary" onClick={() => demo?.simulateDisconnect()}>
                   <WifiOff size={14} />
-                  <span>Simulate Connection Loss</span>
+                  <span>Simulate Disconnect</span>
                 </button>
-                <button
-                  className="btn btn--primary"
-                  onClick={() => actions.reconnect()}
-                  disabled={pending.reconnect}
-                >
-                  <Wifi size={14} />
-                  <span>Reconnect Feeder</span>
-                </button>
-                <button
-                  className="btn btn--amber"
-                  onClick={() => demo?.refillHopper()}
-                >
-                  Refill Hopper (100%)
-                </button>
-                <button
-                  className="btn btn--secondary"
-                  onClick={() => demo?.emptyBowl()}
-                >
-                  Lick Bowl Clean (0 g)
-                </button>
-              </div>
-            )}
+              )}
+              {rssi !== null && (
+                <span style={{ marginLeft: 'auto', fontSize: '13px', fontWeight: 600, color: 'var(--text-muted)', alignSelf: 'center' }}>
+                  RSSI: {rssi} dBm
+                </span>
+              )}
+            </div>
           </div>
         </div>
       )}

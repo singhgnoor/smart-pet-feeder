@@ -1,8 +1,3 @@
-/**
- * Protocol mapping helpers: convert between the compact wire JSON described in the
- * Smart Pet Feeder technical reference and the friendly types used by the UI.
- * These are transport-agnostic and are shared by the mock and any future REST service.
- */
 import type {
   DeviceStatus,
   DeviceTelemetry,
@@ -21,7 +16,6 @@ import type {
 
 const FAULTS: FaultCode[] = ['JAM', 'SENSOR', 'RTC'];
 
-/** Split a raw `st` string into a state + optional fault code. RTC is a warning, not a latched fault. */
 export function parseState(st: RawStateString): { state: FeederState; fault: FaultCode | null } {
   if ((FAULTS as string[]).includes(st)) {
     const fault = st as FaultCode;
@@ -42,19 +36,28 @@ export function telemetryFromRaw(raw: RawTelemetry, receivedAt = Date.now()): De
     petVisitsToday: raw.vis,
     dispensedTodayG: raw.day,
     gateOpen: raw.gate === 1,
+    cooldownRemainingS: typeof raw.cd === 'number' && Number.isFinite(raw.cd) ? raw.cd : 0,
+    cameraOn: raw.cam === 1,
     receivedAt,
   };
 }
 
 export function statusFromRaw(raw: RawStatus): DeviceStatus {
-  return { link: raw.link, rssi: raw.rssi, telemetry: telemetryFromRaw(raw.telem) };
+  return {
+    link: raw.link,
+    rssi: raw.rssi,
+    cameraOn: raw.cam,
+    flashOn: raw.flash,
+    telemetry: telemetryFromRaw(raw.telem),
+  };
 }
 
 export function eventFromLog(raw: RawLogRecord, demo = false): FeedingEvent {
+  const source = raw.src === 'S' ? 'scheduled' : raw.src === 'I' ? 'ir' : 'manual';
   return {
     id: `${raw.ts}-${raw.id}-${raw.slot}-${raw.res}`,
     timestamp: raw.ts,
-    source: raw.src === 'S' ? 'scheduled' : 'manual',
+    source,
     slot: raw.slot >= 0 ? raw.slot : null,
     targetG: raw.tgt,
     dispensedG: Math.max(0, raw.d),
@@ -69,7 +72,7 @@ export function eventFromLog(raw: RawLogRecord, demo = false): FeedingEvent {
 }
 
 export function scheduleFromRaw(raw: RawScheduleSlot[]): FeedingSchedule[] {
-  const slots: FeedingSchedule[] = [0, 1, 2, 3].map((i) => ({ slot: i, enabled: false, hour: 8, minute: 0, portionG: 50 }));
+  const slots: FeedingSchedule[] = [0, 1, 2, 3].map((i) => ({ slot: i, enabled: false, hour: 8, minute: 0, portionG: 30 }));
   for (const r of raw) {
     if (r.i >= 0 && r.i < 4) slots[r.i] = { slot: r.i, enabled: r.en === 1, hour: r.hh, minute: r.mm, portionG: r.g };
   }
@@ -82,10 +85,12 @@ export function scheduleToRaw(slots: FeedingSchedule[]): RawScheduleSlot[] {
 
 export function configFromRaw(raw: RawConfig): FeederConfig {
   return {
-    leftoverThresholdG: raw.leftover_g,
-    overshootMarginG: raw.overshoot_g,
-    dailyLimitG: raw.daily_g,
-    requirePetDetection: raw.require_pet,
+    leftoverThresholdG: raw.leftover_g ?? 200,
+    overshootMarginG: raw.overshoot_g ?? 3,
+    dailyLimitG: raw.daily_g ?? 300,
+    requirePetDetection: Boolean(raw.require_pet),
+    cooldownMin: typeof raw.cooldown_min === 'number' ? raw.cooldown_min : 10,
+    irPortionG: typeof raw.ir_portion_g === 'number' ? raw.ir_portion_g : 20,
   };
 }
 
@@ -95,10 +100,11 @@ export function configToRaw(cfg: FeederConfig): RawConfig {
     overshoot_g: cfg.overshootMarginG,
     daily_g: cfg.dailyLimitG,
     require_pet: cfg.requirePetDetection,
+    cooldown_min: cfg.cooldownMin,
+    ir_portion_g: cfg.irPortionG ?? 20,
   };
 }
 
-/** Local ISO-like timestamp without timezone, as produced by the DS3231 (`2026-10-13T08:00:12`). */
 export function localIso(d = new Date()): string {
   const p = (n: number) => String(n).padStart(2, '0');
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;

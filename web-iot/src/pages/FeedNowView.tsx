@@ -1,15 +1,16 @@
 import React, { useState, useMemo } from 'react';
-import { Play, Square, AlertCircle, Loader2 } from 'lucide-react';
+import { Play, Square, AlertCircle, Loader2, Clock } from 'lucide-react';
 import { useDevice } from '../context/DeviceContext';
 import { useConfirm } from '../components/ConfirmDialog';
 import { dateTime, grams, duration } from '../utils/format';
 import { RESULT_INFO, STATE_INFO } from '../utils/labels';
 
 export const FeedNowView: React.FC = () => {
-  const { telemetry, activeFeed, canOperate, actions, pending, events } = useDevice();
+  const { telemetry, activeFeed, canOperate, actions, pending, events, config } = useDevice();
   const confirm = useConfirm();
 
   const [selectedPortion, setSelectedPortion] = useState<number>(20);
+  const [overrideCooldown, setOverrideCooldown] = useState<boolean>(false);
   const chips = [10, 20, 30, 50];
   const portionToFeed = selectedPortion;
 
@@ -22,13 +23,16 @@ export const FeedNowView: React.FC = () => {
     telemetry?.state === 'REPORT';
 
   const isFault = telemetry?.state === 'FAULT';
+  const maxBowlG = config?.leftoverThresholdG ?? 200;
+  const bowlTooFull = (telemetry?.bowlWeightG ?? 0) > maxBowlG;
+  const cdSec = telemetry?.cooldownRemainingS ?? 0;
 
   const handleFeed = async () => {
     if (!canOperate || isDispensing || isFault) return;
 
     const ok = await confirm({
       title: `Dispense ${portionToFeed} g of food? 🥣`,
-      body: `This will dispense a ${portionToFeed} g meal into the bowl. Make sure the bowl is clean and ready.`,
+      body: `This will shift the servo by 10° to dispense ${portionToFeed} g.${overrideCooldown ? ' (Cooldown override enabled)' : ''}`,
       confirmLabel: 'Feed Now 🥣',
       cancelLabel: 'Cancel',
       emoji: '🐾',
@@ -36,7 +40,7 @@ export const FeedNowView: React.FC = () => {
     });
 
     if (ok) {
-      await actions.feed(portionToFeed);
+      await actions.feed(portionToFeed, overrideCooldown);
     }
   };
 
@@ -55,27 +59,24 @@ export const FeedNowView: React.FC = () => {
     }
   };
 
-  // Filter state for comprehensive logs
   const [filter, setFilter] = useState<string>('all');
   const [sourceFilter, setSourceFilter] = useState<string>('all');
 
   const filteredEvents = useMemo(() => {
     return events.filter((ev) => {
-      // Result filter
       if (filter === 'completed' && !(ev.result === 'OK' || ev.result === 'OVER' || ev.result === 'SHORT')) return false;
       if (filter === 'aborted' && ev.result !== 'ABORTED' && ev.result !== 'TIMEOUT') return false;
       if (filter === 'skipped' && !ev.result.startsWith('SKIP')) return false;
       if (filter === 'fault' && ev.result !== 'JAM' && ev.result !== 'SENSOR') return false;
 
-      // Source filter
       if (sourceFilter === 'manual' && ev.source !== 'manual') return false;
       if (sourceFilter === 'scheduled' && ev.source !== 'scheduled') return false;
+      if (sourceFilter === 'ir' && ev.source !== 'ir') return false;
 
       return true;
     });
   }, [events, filter, sourceFilter]);
 
-  // Overall totals for feeding logs
   const totalG = useMemo(() => events.reduce((sum, e) => sum + e.dispensedG, 0), [events]);
   const successCount = useMemo(
     () => events.filter((e) => e.result === 'OK' || e.result === 'SHORT' || e.result === 'OVER').length,
@@ -86,23 +87,50 @@ export const FeedNowView: React.FC = () => {
 
   return (
     <div className="feed-now-page">
-      {/* Header */}
       <div className="page-header">
         <div>
           <h1 className="page-header__greeting">
             <span>Feed Now & History</span>
             <span style={{ fontSize: '24px' }}>🥣</span>
           </h1>
-          <p className="page-header__sub">Manual dispensing controls and complete feeding logs.</p>
+          <p className="page-header__sub">Manual dispensing controls, cooldown guard, and RTC feeding logs.</p>
         </div>
       </div>
 
-      {/* Main Dispense Card */}
+      {/* Cooldown & Bowl Guard Banner */}
+      {(cdSec > 0 || bowlTooFull) && (
+        <div
+          className="card"
+          style={{
+            background: '#fffbe6',
+            borderColor: '#ffe58f',
+            padding: '14px 18px',
+            marginBottom: '18px',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '12px',
+          }}
+        >
+          <Clock size={20} color="#d48806" />
+          <div style={{ fontSize: '13px', color: '#874d00' }}>
+            {bowlTooFull && (
+              <div>
+                <strong>Bowl Limit Reached:</strong> Bowl already has {telemetry?.bowlWeightG.toFixed(1)} g (limit {maxBowlG} g). Dispensing is blocked.
+              </div>
+            )}
+            {cdSec > 0 && (
+              <div>
+                <strong>Cooldown Barrier Active:</strong> Next dispense allowed in {Math.floor(cdSec / 60)}m {String(cdSec % 60).padStart(2, '0')}s (T = {config?.cooldownMin ?? 10} min).
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
       <div className="card" style={{ padding: '24px' }}>
         <div className="grid-feed">
-          {/* Controls */}
           <div>
-            <div style={{ marginBottom: '24px' }}>
+            <div style={{ marginBottom: '18px' }}>
               <label
                 style={{
                   display: 'block',
@@ -117,7 +145,7 @@ export const FeedNowView: React.FC = () => {
                 Portion Size
               </label>
 
-              <div className="chip-group" style={{ marginBottom: '16px' }}>
+              <div className="chip-group" style={{ marginBottom: '14px' }}>
                 {chips.map((val) => (
                   <button
                     key={val}
@@ -130,9 +158,17 @@ export const FeedNowView: React.FC = () => {
                   </button>
                 ))}
               </div>
+
+              <label style={{ display: 'inline-flex', alignItems: 'center', gap: '8px', fontSize: '13px', color: 'var(--text-muted)', cursor: 'pointer' }}>
+                <input
+                  type="checkbox"
+                  checked={overrideCooldown}
+                  onChange={(e) => setOverrideCooldown(e.target.checked)}
+                />
+                <span>Override T-minute cooldown for manual dispense</span>
+              </label>
             </div>
 
-            {/* Live Dispense Indicator or Feed Button */}
             {isDispensing ? (
               <div
                 style={{
@@ -207,7 +243,6 @@ export const FeedNowView: React.FC = () => {
             )}
           </div>
 
-          {/* Right Image: Cute Puppy */}
           <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center' }}>
             <img
               src="/assets/puppy-paw.jpg"
@@ -226,7 +261,6 @@ export const FeedNowView: React.FC = () => {
         </div>
       </div>
 
-      {/* Summary KPI Badges */}
       <div className="grid-kpi-3" style={{ marginBottom: '20px' }}>
         <div className="card" style={{ padding: '16px 20px', marginBottom: 0 }}>
           <span style={{ fontSize: '11px', fontWeight: 700, color: 'var(--text-light)', textTransform: 'uppercase' }}>
@@ -256,7 +290,6 @@ export const FeedNowView: React.FC = () => {
         </div>
       </div>
 
-      {/* Complete Feeding History & Logs Card */}
       <div className="card">
         <div
           className="card__header"
@@ -270,10 +303,9 @@ export const FeedNowView: React.FC = () => {
         >
           <div>
             <h3 className="card__title">Feeding History & Logs</h3>
-            <p className="card__subtitle">Complete record of manual and scheduled feedings</p>
+            <p className="card__subtitle">Complete RTC-timestamped record of IR, manual, and scheduled feedings</p>
           </div>
 
-          {/* Filter Dropdowns */}
           <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
             <select
               className="select"
@@ -283,7 +315,7 @@ export const FeedNowView: React.FC = () => {
             >
               <option value="all">All Statuses</option>
               <option value="completed">Completed Meals</option>
-              <option value="skipped">Skipped Feeds</option>
+              <option value="skipped">Skipped (Cooldown / Bowl Full)</option>
               <option value="aborted">Aborted / Timeouts</option>
               <option value="fault">Fault Events</option>
             </select>
@@ -295,6 +327,7 @@ export const FeedNowView: React.FC = () => {
               aria-label="Filter events by source"
             >
               <option value="all">All Sources</option>
+              <option value="ir">IR Auto Only</option>
               <option value="manual">Manual Feeds Only</option>
               <option value="scheduled">Scheduled Only</option>
             </select>
@@ -323,8 +356,13 @@ export const FeedNowView: React.FC = () => {
                 </tr>
               ) : (
                 filteredEvents.map((evt) => {
-                  const info = RESULT_INFO[evt.result];
-                  const isScheduled = evt.source === 'scheduled';
+                  const info = RESULT_INFO[evt.result] ?? RESULT_INFO.OK;
+                  const label =
+                    evt.source === 'scheduled'
+                      ? `Meal ${evt.slot !== null ? evt.slot + 1 : 'Sched'}`
+                      : evt.source === 'ir'
+                      ? 'IR Auto Feed'
+                      : 'Manual Feed';
 
                   return (
                     <tr key={evt.id}>
@@ -333,14 +371,10 @@ export const FeedNowView: React.FC = () => {
                         <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                           <span style={{ fontSize: '16px' }}>{info.emoji}</span>
                           <div>
-                            <span style={{ fontWeight: 700 }}>
-                              {isScheduled
-                                ? `Meal ${evt.slot !== null ? evt.slot + 1 : 'Sched'}`
-                                : 'Manual Feed'}
-                            </span>
+                            <span style={{ fontWeight: 700 }}>{label}</span>
                             {evt.wiggles > 0 && (
                               <span style={{ fontSize: '11px', color: 'var(--text-light)', display: 'block' }}>
-                                {evt.wiggles} wiggle(s) to clear kibble
+                                {evt.wiggles} wiggle(s)
                               </span>
                             )}
                           </div>

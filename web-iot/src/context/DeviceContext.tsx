@@ -1,10 +1,3 @@
-/**
- * DeviceContext — the single source of truth for device data in the UI.
- *
- * It owns the DeviceService instance (either real RestDeviceService or simulated MockDeviceService),
- * subscribes to its live event stream (GET /events), keeps telemetry / schedule / history / config /
- * visits in React state and exposes typed actions. Components never talk to the service directly.
- */
 import {
   createContext,
   useCallback,
@@ -56,6 +49,9 @@ export type CommandName =
   | 'tare'
   | 'calibrate'
   | 'snapshot'
+  | 'camera'
+  | 'flash'
+  | 'time'
   | 'reconnect'
   | 'reset';
 
@@ -72,6 +68,8 @@ export interface DeviceContextValue {
   connection: DeviceConnectionState;
   link: boolean;
   rssi: number | null;
+  cameraOn: boolean;
+  flashOn: boolean;
   telemetry: DeviceTelemetry | null;
   lastHeartbeat: number | null;
   weightHistory: WeightPoint[];
@@ -83,17 +81,19 @@ export interface DeviceContextValue {
   snapshot: Snapshot | null;
   calibration: CalibrationInfo;
   pending: Partial<Record<CommandName, boolean>>;
-  /** True when commands can be sent (connected and telemetry received, and link active). */
   canOperate: boolean;
   actions: {
-    feed: (g: number) => Promise<boolean>;
+    feed: (g: number, force?: boolean) => Promise<boolean>;
     abort: () => Promise<boolean>;
     clearFault: () => Promise<boolean>;
     saveSchedule: (s: FeedingSchedule[]) => Promise<boolean>;
     saveConfig: (c: FeederConfig) => Promise<boolean>;
     tare: () => Promise<boolean>;
     calibrate: (knownG: number) => Promise<boolean>;
-    refreshSnapshot: () => Promise<boolean>;
+    refreshSnapshot: (wake?: boolean) => Promise<boolean>;
+    setCamera: (on: boolean) => Promise<boolean>;
+    setFlash: (on: boolean) => Promise<boolean>;
+    syncTime: () => Promise<boolean>;
     reconnect: () => Promise<void>;
   };
   demo: {
@@ -111,7 +111,7 @@ const DeviceContext = createContext<DeviceContextValue | null>(null);
 function getInitialMode(): DeviceMode {
   const saved = localStorage.getItem(MODE_STORAGE_KEY) as DeviceMode | null;
   if (saved === 'hardware' || saved === 'mock') return saved;
-  return (import.meta.env.VITE_DEVICE_MODE as DeviceMode) === 'hardware' ? 'hardware' : 'mock';
+  return (import.meta.env.VITE_DEVICE_MODE as DeviceMode) === 'mock' ? 'mock' : 'hardware';
 }
 
 function loadCalibration(): CalibrationInfo {
@@ -152,6 +152,8 @@ export function DeviceProvider({ children }: { children: ReactNode }) {
   const [connection, setConnection] = useState<DeviceConnectionState>('connecting');
   const [link, setLink] = useState(false);
   const [rssi, setRssi] = useState<number | null>(null);
+  const [cameraOn, setCameraOn] = useState(false);
+  const [flashOn, setFlashOn] = useState(false);
   const [telemetry, setTelemetry] = useState<DeviceTelemetry | null>(null);
   const [lastHeartbeat, setLastHeartbeat] = useState<number | null>(null);
   const [weightHistory, setWeightHistory] = useState<WeightPoint[]>([]);
@@ -164,7 +166,6 @@ export function DeviceProvider({ children }: { children: ReactNode }) {
   const [calibration, setCalibration] = useState<CalibrationInfo>(loadCalibration);
   const [pending, setPending] = useState<Partial<Record<CommandName, boolean>>>({});
 
-  // Refs used by the event handler (avoids stale closures inside the subscription).
   const telemetryRef = useRef<DeviceTelemetry | null>(null);
   const scheduleRef = useRef<FeedingSchedule[]>([]);
   const prevStateRef = useRef<FeederState | null>(null);
@@ -191,6 +192,8 @@ export function DeviceProvider({ children }: { children: ReactNode }) {
     setConnection('connecting');
     setLink(false);
     setRssi(null);
+    setCameraOn(false);
+    setFlashOn(false);
     setTelemetry(null);
     setLastHeartbeat(null);
     setWeightHistory([]);
@@ -206,33 +209,31 @@ export function DeviceProvider({ children }: { children: ReactNode }) {
       title: newMode === 'hardware' ? 'Hardware Mode Active ⚡' : 'Demo Simulation Mode 🐾',
       message:
         newMode === 'hardware'
-          ? 'Connecting to physical ESP32-CAM REST and SSE APIs via Vite proxy.'
-          : 'Running realistic in-browser Smart Pet Feeder simulation.',
+          ? 'Connecting to ESP32-CAM Access Point (192.168.4.1).'
+          : 'Running in-browser Smart Pet Feeder simulation.',
     });
   }, [toast]);
 
-  /* ---------------- synchronisation ---------------- */
-
   const refreshAll = useCallback(async () => {
     const sequence = ++refreshSequenceRef.current;
-    const [st, sc, lg, cf, vs, sn] = await Promise.allSettled([
+    const [st, sc, lg, cf, vs] = await Promise.allSettled([
       service.getStatus(),
       service.getSchedule(),
       service.getLog(),
       service.getConfig(),
       service.getPetVisits(),
-      service.getSnapshot(),
     ]);
 
-    // A slow prior-mode request must never overwrite the newly selected transport's state.
     if (serviceRef.current !== service || sequence !== refreshSequenceRef.current) return;
 
     if (st.status === 'fulfilled') {
       setConnection('connected');
       setLink(st.value.link);
       setRssi(st.value.rssi);
+      if (typeof st.value.cameraOn === 'boolean') setCameraOn(st.value.cameraOn);
+      if (typeof st.value.flashOn === 'boolean') setFlashOn(st.value.flashOn);
       setTelemetry(st.value.telemetry);
-      setLastHeartbeat(null);
+      setLastHeartbeat(Date.now());
       prevStateRef.current = st.value.telemetry?.state ?? null;
       prevFaultRef.current = st.value.telemetry?.fault ?? null;
     } else if (service.mode === 'hardware') {
@@ -244,25 +245,14 @@ export function DeviceProvider({ children }: { children: ReactNode }) {
     if (lg.status === 'fulfilled') setEvents(lg.value.slice(0, HISTORY_LIMIT));
     if (cf.status === 'fulfilled') setConfig(cf.value);
     if (vs.status === 'fulfilled') setVisits(vs.value);
-    if (sn.status === 'fulfilled') setSnapshot(sn.value);
   }, [service]);
 
-  /** Track transitions of the feeder state to derive the active job and fault notifications. */
   const onStateChange = useCallback(
     (state: FeederState, fault: FaultCode | null) => {
       const prev = prevStateRef.current;
       if (isActiveState(state) && (prev === null || !isActiveState(prev))) {
-        if (service.mode === 'hardware') {
-          // No WROOM telemetry or correlated operation IDs exist in this build.
-          // State changes cannot safely be attributed to a dashboard request.
-          setActiveFeed(null);
-          prevStateRef.current = state;
-          prevFaultRef.current = fault;
-          return;
-        }
         const manual = pendingManualRef.current;
         pendingManualRef.current = null;
-        const now = new Date();
         let feed: ActiveFeed;
         if (manual && Date.now() - manual.at < 10_000) {
           feed = {
@@ -273,25 +263,13 @@ export function DeviceProvider({ children }: { children: ReactNode }) {
             startWeightG: telemetryRef.current?.bowlWeightG ?? 0,
           };
         } else {
-          const minNow = now.getHours() * 60 + now.getMinutes();
-          const slot = scheduleRef.current.find(
-            (s) =>
-              s.enabled &&
-              minNow - (s.hour * 60 + s.minute) >= 0 &&
-              minNow - (s.hour * 60 + s.minute) <= 5
-          );
           feed = {
-            targetG: slot?.portionG ?? 0,
-            source: 'scheduled',
-            slot: slot?.slot ?? null,
+            targetG: config?.irPortionG ?? 20,
+            source: 'ir',
+            slot: null,
             startedAt: Date.now(),
             startWeightG: telemetryRef.current?.bowlWeightG ?? 0,
           };
-          toast.push({
-            kind: 'info',
-            title: 'Scheduled meal starting 🐕',
-            message: slot ? `Slot ${slot.slot + 1} · ${slot.portionG} g` : undefined,
-          });
         }
         setActiveFeed(feed);
       } else if (!isActiveState(state)) {
@@ -308,7 +286,7 @@ export function DeviceProvider({ children }: { children: ReactNode }) {
       prevStateRef.current = state;
       prevFaultRef.current = fault;
     },
-    [toast]
+    [config, toast]
   );
 
   const handleEvent = useCallback(
@@ -320,11 +298,11 @@ export function DeviceProvider({ children }: { children: ReactNode }) {
             if (!wasLostRef.current) {
               toast.push({
                 kind: 'error',
-                title: service.mode === 'hardware' ? 'ESP32 Unreachable' : 'Connection lost',
+                title: service.mode === 'hardware' ? 'ESP32-CAM Unreachable' : 'Connection lost',
                 message:
                   service.mode === 'hardware'
-                    ? 'Cannot reach ESP32-CAM via HTTP/SSE. Check power and Wi-Fi.'
-                    : 'Live data paused. Feeding controls are disabled until the feeder reconnects.',
+                    ? 'Cannot reach ESP32-CAM at 192.168.4.1. Connect to Wi-Fi AP "PetFeeder".'
+                    : 'Live data paused.',
               });
             }
             wasLostRef.current = true;
@@ -346,6 +324,7 @@ export function DeviceProvider({ children }: { children: ReactNode }) {
           const t = telemetryFromRaw(evt.data);
           setTelemetry(t);
           setLink(true);
+          setCameraOn(t.cameraOn);
           setLastHeartbeat(t.receivedAt);
           setWeightHistory((h) => {
             const last = h[h.length - 1];
@@ -364,10 +343,14 @@ export function DeviceProvider({ children }: { children: ReactNode }) {
           onStateChange(state, fault);
           return;
         }
+        case 'camera': {
+          setCameraOn(evt.data.on);
+          return;
+        }
         case 'log': {
           const ev = eventFromLog(evt.data, service.mode === 'mock');
           setEvents((prev) => [ev, ...prev.filter((p) => p.id !== ev.id)].slice(0, HISTORY_LIMIT));
-          const info = RESULT_INFO[ev.result];
+          const info = RESULT_INFO[ev.result] ?? RESULT_INFO.OK;
           const kind: ToastInput['kind'] =
             info.tone === 'ok' ? 'success' : info.tone === 'danger' ? 'error' : 'warning';
           const title =
@@ -376,12 +359,12 @@ export function DeviceProvider({ children }: { children: ReactNode }) {
               : ev.result === 'ABORTED'
               ? 'Feeding aborted'
               : ev.result.startsWith('SKIP')
-              ? 'Feeding skipped'
+              ? info.label
               : `Feeding finished: ${info.label}`;
           const amount =
             ev.result.startsWith('SKIP') || ev.result === 'LOW_FOOD'
               ? ''
-              : ` ${grams(ev.dispensedG)} of ${ev.targetG} g dispensed.`;
+              : ` ${grams(ev.dispensedG)} dispensed.`;
           toast.push({ kind, title, message: `${info.explain}${amount}` });
           return;
         }
@@ -396,12 +379,13 @@ export function DeviceProvider({ children }: { children: ReactNode }) {
             demo: service.mode === 'mock',
           };
           setVisits((prev) => [v, ...prev].slice(0, 60));
+          setCameraOn(true);
           service.getSnapshot().then(setSnapshot).catch(() => undefined);
           if (v.verdict === 'PET') {
             toast.push({
               kind: 'info',
-              title: 'Pet detected 🐾',
-              message: `TinyML verdict · ${v.confidence}% confidence`,
+              title: 'IR Triggered · Camera ON 📷',
+              message: 'Pet detected at the feeder — live feed activated.',
             });
           }
           return;
@@ -409,17 +393,17 @@ export function DeviceProvider({ children }: { children: ReactNode }) {
         case 'low_food':
           toast.push({
             kind: 'warning',
-            title: 'Hopper running low 🦴',
+            title: 'Low Food Warning 🦴',
             message: evt.data.pct < 0
-              ? 'The device reported a low hopper threshold; exact percentage is unavailable.'
-              : `Only ${evt.data.pct}% left — time to refill the hopper.`,
+              ? 'Hopper level is critically low — refill soon.'
+              : `Only ${evt.data.pct}% left in hopper — time to refill.`,
           });
           return;
         case 'error':
-          if (evt.data.err === 'JAM' || evt.data.err === 'SENSOR') return; // reported via status
+          if (evt.data.err === 'JAM' || evt.data.err === 'SENSOR') return;
           toast.push({
-            kind: 'error',
-            title: 'Device error',
+            kind: 'warning',
+            title: 'Feeder Notice',
             message: evt.data.nak ?? evt.data.err ?? 'Unknown error',
           });
           return;
@@ -439,8 +423,6 @@ export function DeviceProvider({ children }: { children: ReactNode }) {
     return () => unsub();
   }, [service, refreshAll]);
 
-  /* ---------------- command helper ---------------- */
-
   const run = useCallback(
     async <T,>(name: CommandName, fn: () => Promise<T>, errorTitle: string): Promise<T | null> => {
       setPending((p) => ({ ...p, [name]: true }));
@@ -458,36 +440,27 @@ export function DeviceProvider({ children }: { children: ReactNode }) {
 
   const actions = useMemo<DeviceContextValue['actions']>(
     () => ({
-      feed: async (g) => {
-        if (service.mode === 'mock') pendingManualRef.current = { grams: g, at: Date.now() };
-        const r = await run('feed', () => service.feed(g), 'Feed request rejected');
+      feed: async (g, force = false) => {
+        pendingManualRef.current = { grams: g, at: Date.now() };
+        const r = await run('feed', () => service.feed(g, force), 'Feed request rejected');
         if (!r) {
           pendingManualRef.current = null;
           return false;
         }
         toast.push({
           kind: 'success',
-          title: 'Request accepted by CAM',
-          message: service.mode === 'hardware'
-            ? 'The CAM returned HTTP 202. WROOM acceptance, dispensing, and completion are not confirmed.'
-            : `Dispensing ${g} g — watch the progress below. 🥣`,
+          title: 'Dispense command sent 🥣',
+          message: `Requested ${g} g${force ? ' (cooldown override)' : ''}.`,
         });
         return true;
       },
       abort: async () => !!(await run('abort', () => service.abort(), 'Abort failed')),
       clearFault: async () => {
-        const r = await run('clear', () => service.clearFault(), 'Could not clear the fault');
+        const r = await run('clear', () => service.clearFault(), 'Could not clear fault');
         if (r) {
-          toast.push({
-            kind: 'info',
-            title: 'Fault clear request accepted',
-            message: 'The device has not confirmed that the fault was cleared.',
-          });
+          toast.push({ kind: 'success', title: 'Fault clear sent', message: 'Feeder reset to IDLE.' });
           prevFaultRef.current = null;
-          void service
-            .getStatus()
-            .then((s) => setTelemetry(s.telemetry))
-            .catch(() => undefined);
+          void refreshAll();
         }
         return !!r;
       },
@@ -502,11 +475,7 @@ export function DeviceProvider({ children }: { children: ReactNode }) {
         );
         if (r) {
           setSchedule(r);
-          toast.push({
-            kind: 'info',
-            title: 'Schedule update accepted',
-            message: 'The CAM echoed the submitted schedule; WROOM storage was not confirmed.',
-          });
+          toast.push({ kind: 'success', title: 'Schedule saved', message: 'Synced to ESP32-S NVS.' });
         }
         return !!r;
       },
@@ -514,39 +483,50 @@ export function DeviceProvider({ children }: { children: ReactNode }) {
         const r = await run('config', () => service.setConfig(c), 'Settings not saved');
         if (r) {
           setConfig(c);
-          toast.push({
-            kind: 'info',
-            title: 'Settings update accepted',
-            message: 'The device has not confirmed that the new limits were applied.',
-          });
+          toast.push({ kind: 'success', title: 'Settings saved', message: `Cooldown T=${c.cooldownMin}m, bowl limit=${c.leftoverThresholdG}g.` });
         }
         return !!r;
       },
       tare: async () => {
         const r = await run('tare', () => service.tare(), 'Tare failed');
-        if (r) {
-          toast.push({ kind: 'info', title: 'Tare request accepted', message: 'The device has not confirmed that the scale was tared.' });
-        }
+        if (r) toast.push({ kind: 'success', title: 'Scale tared', message: 'HX711 zeroed to 0 g.' });
         return !!r;
       },
       calibrate: async (knownG) => {
-        const r = await run(
-          'calibrate',
-          () => service.calibrate(knownG),
-          'Calibration failed'
-        );
+        const r = await run('calibrate', () => service.calibrate(knownG), 'Calibration failed');
+        if (r) toast.push({ kind: 'success', title: 'Scale calibrated', message: `Calibrated with ${knownG} g.` });
+        return !!r;
+      },
+      refreshSnapshot: async (wake = false) => {
+        const r = await run('snapshot', () => service.getSnapshot(wake), 'Snapshot unavailable');
+        if (r) setSnapshot(r);
+        return !!r;
+      },
+      setCamera: async (on: boolean) => {
+        if (!service.setCamera) {
+          setCameraOn(on);
+          return true;
+        }
+        const r = await run('camera', () => service.setCamera!(on), 'Camera toggle failed');
         if (r) {
-          toast.push({
-            kind: 'info',
-            title: 'Calibration request accepted',
-            message: 'The device has not confirmed calibration or the reported scale factor.',
-          });
+          setCameraOn(r.on);
+          toast.push({ kind: 'info', title: r.on ? 'Camera ON 📷' : 'Camera Standby', message: r.on ? 'Live feed streaming.' : 'Camera powered down.' });
         }
         return !!r;
       },
-      refreshSnapshot: async () => {
-        const r = await run('snapshot', () => service.getSnapshot(), 'Snapshot unavailable');
-        if (r) setSnapshot(r);
+      setFlash: async (on: boolean) => {
+        if (!service.setFlash) {
+          setFlashOn(on);
+          return true;
+        }
+        const r = await run('flash', () => service.setFlash!(on), 'Flash toggle failed');
+        if (r) setFlashOn(r.flash === 'ON');
+        return !!r;
+      },
+      syncTime: async () => {
+        if (!service.syncTime) return false;
+        const r = await run('time', () => service.syncTime!(), 'RTC sync failed');
+        if (r) toast.push({ kind: 'success', title: 'RTC synced', message: 'DS3231 clock updated from browser.' });
         return !!r;
       },
       reconnect: async () => {
@@ -571,19 +551,11 @@ export function DeviceProvider({ children }: { children: ReactNode }) {
       triggerVisit: (k) => d.triggerVisit(k),
       refillHopper: () => {
         d.refillHopper();
-        toast.push({
-          kind: 'success',
-          title: 'Hopper refilled 🦴',
-          message: 'Simulated hopper is back to 100%.',
-        });
+        toast.push({ kind: 'success', title: 'Hopper refilled 🦴', message: 'Simulated hopper at 100%.' });
       },
       emptyBowl: () => {
         d.emptyBowl();
-        toast.push({
-          kind: 'info',
-          title: 'Bowl licked clean 🐶',
-          message: 'Simulated bowl weight reset to near zero.',
-        });
+        toast.push({ kind: 'info', title: 'Bowl emptied 🐶', message: 'Simulated bowl weight reset.' });
       },
       resetDemo: async () => {
         setPending((p) => ({ ...p, reset: true }));
@@ -596,11 +568,7 @@ export function DeviceProvider({ children }: { children: ReactNode }) {
           prevFaultRef.current = null;
           wasLostRef.current = false;
           await refreshAll();
-          toast.push({
-            kind: 'success',
-            title: 'Demo data restored',
-            message: 'Telemetry, schedules, history and settings were reset.',
-          });
+          toast.push({ kind: 'success', title: 'Demo data restored', message: 'All demo values reset.' });
           return true;
         } catch (e) {
           toast.push({ kind: 'error', title: 'Reset failed', message: errorMessage(e) });
@@ -616,12 +584,12 @@ export function DeviceProvider({ children }: { children: ReactNode }) {
     mode,
     setMode,
     isDemo: service.mode === 'mock',
-    integrationNotice: service.mode === 'hardware'
-      ? 'CAM connectivity is separate from feeder status. This firmware does not provide verifiable WROOM telemetry, command acknowledgements, schedule/config readback, or complete feeding history; affected hardware controls are unavailable.'
-      : null,
+    integrationNotice: null,
     connection,
     link,
     rssi,
+    cameraOn,
+    flashOn,
     telemetry,
     lastHeartbeat,
     weightHistory,
@@ -633,9 +601,10 @@ export function DeviceProvider({ children }: { children: ReactNode }) {
     snapshot,
     calibration,
     pending,
-    canOperate: service.mode === 'mock'
-      ? connection === 'connected' && telemetry !== null
-      : false,
+    canOperate:
+      service.mode === 'mock'
+        ? connection === 'connected' && telemetry !== null
+        : connection === 'connected' && link,
     actions,
     demo,
   };

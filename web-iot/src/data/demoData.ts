@@ -1,13 +1,8 @@
-/**
- * Sample data used on first launch and by "Reset Demo Data".
- * Everything here is clearly demonstration data — it is generated relative to "now"
- * so the dashboard looks lived-in, and every record is flagged `demo`.
- */
 import type { PetVisit, RawConfig, RawLogRecord, RawScheduleSlot } from '../types/device';
 import { dayKey, localIso } from '../services/protocol';
 
-export const HOPPER_CAPACITY_G = 1800; // ~2.9 L hopper of dry kibble
-export const DEFAULT_CAL_FACTOR = 420; // placeholder counts/gram from the firmware
+export const HOPPER_CAPACITY_G = 1800;
+export const DEFAULT_CAL_FACTOR = 2280;
 
 export const DEFAULT_SCHEDULE: RawScheduleSlot[] = [
   { i: 0, hh: 7, mm: 30, g: 45, en: 1 },
@@ -17,15 +12,16 @@ export const DEFAULT_SCHEDULE: RawScheduleSlot[] = [
 ];
 
 export const DEFAULT_CONFIG: RawConfig = {
-  leftover_g: 30,
+  leftover_g: 200,
   overshoot_g: 3,
   daily_g: 300,
   require_pet: false,
+  cooldown_min: 10,
+  ir_portion_g: 20,
 };
 
 export const SLOT_LABELS = ['Breakfast', 'Lunch', 'Dinner', 'Late snack'];
 
-/** Small deterministic PRNG so "Reset Demo Data" always produces the same story. */
 function mulberry32(seed: number) {
   let a = seed;
   return () => {
@@ -39,7 +35,6 @@ function mulberry32(seed: number) {
 
 const round1 = (n: number) => Math.round(n * 10) / 10;
 
-/** Log record as stored by the simulated device; `demo` marks seeded sample rows. */
 export type StoredLog = RawLogRecord & { demo?: boolean };
 
 export interface DemoSeed {
@@ -62,7 +57,6 @@ export function buildDemoSeed(now = new Date()): DemoSeed {
     const base = new Date(now);
     base.setDate(base.getDate() - dayOffset);
 
-    // Scheduled meals
     for (const slot of DEFAULT_SCHEDULE) {
       if (!slot.en) continue;
       const at = new Date(base);
@@ -90,7 +84,7 @@ export function buildDemoSeed(now = new Date()): DemoSeed {
         top = 1;
       }
       if (rand() > 0.85 && d > 0) wig = 1;
-      const w0Final = res === 'SKIP_LEFTOVER' ? round1(32 + rand() * 12) : w0;
+      const w0Final = res === 'SKIP_LEFTOVER' ? round1(205 + rand() * 15) : w0;
       log.push({
         slot: slot.i,
         src: 'S',
@@ -108,13 +102,12 @@ export function buildDemoSeed(now = new Date()): DemoSeed {
       });
     }
 
-    // Occasional manual feeds
     if (rand() > 0.45) {
       const at = new Date(base);
       at.setHours(15 + Math.floor(rand() * 4), Math.floor(rand() * 60), Math.floor(rand() * 60), 0);
       if (at <= now) {
         id += 1;
-        const tgt = [25, 30, 50][Math.floor(rand() * 3)];
+        const tgt = [20, 30, 50][Math.floor(rand() * 3)];
         const aborted = rand() > 0.8;
         const w0 = round1(3 + rand() * 8);
         const d = aborted ? round1(tgt * (0.2 + rand() * 0.4)) : round1(tgt + (rand() * 3 - 1.5));
@@ -136,7 +129,6 @@ export function buildDemoSeed(now = new Date()): DemoSeed {
       }
     }
 
-    // Pet visits (TinyML verdicts)
     const visitCount = dayOffset === 0 ? 5 : 4 + Math.floor(rand() * 4);
     for (let v = 0; v < visitCount; v++) {
       const at = new Date(base);

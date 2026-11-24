@@ -6,13 +6,10 @@ declare const process: {
 };
 
 export default defineConfig(({ mode }) => {
-  // Load env variables based on `mode` in the current working directory.
   const env = loadEnv(mode, process.cwd(), '');
-  const espHost = env.VITE_ESP32_HOST || '192.168.1.100';
+  const espHost = env.VITE_ESP32_HOST || '192.168.4.1';
   const espPort = env.VITE_ESP32_PORT || '80';
-  // Keep the device credential in the dev-server process. VITE_ variables are
-  // available to browser bundles, so the legacy name is read only server-side.
-  const deviceApiKey = env.DEVICE_API_KEY || env.VITE_DEVICE_API_KEY || '';
+  const deviceApiKey = env.DEVICE_API_KEY || env.VITE_DEVICE_API_KEY || 'change-me';
   const target = `http://${espHost}:${espPort}`;
 
   return {
@@ -21,7 +18,6 @@ export default defineConfig(({ mode }) => {
       port: 5173,
       open: false,
       proxy: {
-        // Forward all REST API requests to the ESP32-CAM HTTP server
         '/api': {
           target,
           changeOrigin: true,
@@ -39,25 +35,22 @@ export default defineConfig(({ mode }) => {
               }
             });
             proxy.on('error', (err, _req, res) => {
-              // Gracefully handle hardware connection errors without crashing Vite
               if (!res.headersSent && 'writeHead' in res) {
                 res.writeHead(502, { 'Content-Type': 'application/json' });
                 res.end(
                   JSON.stringify({
                     error: 'DEVICE_UNREACHABLE',
-                    message: `ESP32-CAM at ${target} is unreachable (${err.message}). Is the feeder powered and on the same Wi-Fi?`,
+                    message: `ESP32-CAM at ${target} is unreachable (${err.message}). Connect to Wi-Fi AP "PetFeeder".`,
                   })
                 );
               }
             });
           },
         },
-        // Forward Server-Sent Events stream to the ESP32-CAM /events endpoint
         '/events': {
           target,
           changeOrigin: true,
           secure: false,
-          // SSE streams must never be buffered
           headers: {
             'Cache-Control': 'no-cache',
             Connection: 'keep-alive',

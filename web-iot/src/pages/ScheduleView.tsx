@@ -6,7 +6,7 @@ import { countdown, pad2 } from '../utils/format';
 import type { FeedingSchedule } from '../types/device';
 
 export const ScheduleView: React.FC = () => {
-  const { schedule, actions, pending, canOperate, mode } = useDevice();
+  const { schedule, actions, pending, canOperate } = useDevice();
 
   // Local draft of the 4 slots
   const [draft, setDraft] = useState<FeedingSchedule[]>(schedule);
@@ -82,11 +82,7 @@ export const ScheduleView: React.FC = () => {
         </div>
       </div>
 
-      {mode === 'hardware' && schedule.length === 0 && (
-        <p role="status" style={{ color: '#ad6800', marginBottom: '16px' }}>
-          The current firmware cannot read or persist the WROOM schedule. No schedule values are being shown as device settings.
-        </p>
-      )}
+
 
       {/* Next Feeding Countdown Summary */}
       <div
